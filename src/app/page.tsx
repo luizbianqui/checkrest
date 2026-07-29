@@ -2365,9 +2365,9 @@ export default function Home() {
                   id: "un-" + (prev.length + 1),
                   name: data.firstUnitName,
                   address: data.firstUnitAddress,
-                  companyId: currentUser?.companyId || "comp-1",
                   status: "active",
-                  managerId: null
+                  managerName: "A definir",
+                  managerAvatar: "https://lh3.googleusercontent.com/aida-public/AB6AXuDyfX8IQJfUdA4ZFxNthzgW-lf6TQccAXYyrRSNCqqIe4LGUFXxzAcBc7OLO6BtHSR7G58m_KEk3Gxm8tGNRfRlO9Ambje4wcy8BK1vSJkPeaFM1F4t2RVFqv1PUqh3Z1S1L-uO5PqQ_jccM-JUfXHpVwHLZL_pqimtnw7O5tFRuA5SBc_77nkn1_MVLgJ7edF8XK6n2viqf7OF7MltA6lSvAfbvRgRWKRrfYXPqQ8rStH9ErmZZZSdlBjmtJ1bQ8nGuD6KplIi_GI"
                 }
               ]);
             }
@@ -2656,7 +2656,7 @@ export default function Home() {
                   <Brain className="w-5 h-5" />
                   IA Consultiva
                 </button>
-                {(currentUser?.role === "COMPANY_ADMIN" || currentUser?.role === "SAAS_ADMIN") && (
+                {currentUser?.role === "COMPANY_ADMIN" && (
                   <button
                     onClick={() => setActiveTab("cadastros")}
                     className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${

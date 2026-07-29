@@ -1,5 +1,5 @@
 {
-  "name": "bobs-temp",
+  "name": "checkrest",
   "version": "0.1.0",
   "private": true,
   "prisma": {
@@ -7,7 +7,8 @@
   },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npx prisma@6 generate && next build",
+    "postinstall": "npx prisma@6 generate",
     "start": "next start",
     "lint": "next lint",
     "check-env": "node -v && npm -v"
