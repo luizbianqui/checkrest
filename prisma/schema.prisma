@@ -1,0 +1,381 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Company {
+  id                 String              @id @default(uuid())
+  name               String
+  cnpj               String              @unique
+  plan               String              @default("Pro") // "Basic", "Pro", "Enterprise"
+  status             String              @default("active") // "active", "inactive"
+  createdAt          DateTime            @default(now()) @map("created_at")
+  updatedAt          DateTime            @updatedAt @map("updated_at")
+  units              Unit[]
+  users              User[]
+  checklistTemplates ChecklistTemplate[]
+  checklistSchedules ChecklistSchedule[]
+  checklistRuns      ChecklistRun[]
+  evidences          Evidence[]
+  nonConformities    NonConformity[]
+  actionPlans        ActionPlan[]
+  occurrences        Occurrence[]
+  documents          Document[]
+  trainings          Training[]
+  userTrainings      UserTraining[]
+  inventoryItems     InventoryItem[]
+  suppliers          Supplier[]
+  auditLogs          AuditLog[]
+
+  @@map("companies")
+}
+
+model Unit {
+  id           String              @id @default(uuid())
+  companyId    String              @map("company_id")
+  name         String
+  address      String
+  managerName  String              @map("manager_name")
+  status       String              @default("active") // "active", "inactive"
+  createdAt    DateTime            @default(now()) @map("created_at")
+  updatedAt    DateTime            @updatedAt @map("updated_at")
+  company      Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  users        User[]
+  schedules    ChecklistSchedule[]
+  runs         ChecklistRun[]
+  evidences    Evidence[]
+  nonConforms  NonConformity[]
+  actionPlans  ActionPlan[]
+  occurrences  Occurrence[]
+  documents    Document[]
+  inventories  InventoryItem[]
+
+  @@map("units")
+}
+
+model User {
+  id            String         @id @default(uuid())
+  companyId     String?        @map("company_id")
+  unitId        String?        @map("unit_id")
+  name          String
+  email         String         @unique
+  passwordHash  String?        @map("password_hash")
+  role          String         @default("OPERATOR") // "SAAS_ADMIN", "COMPANY_ADMIN", "UNIT_MANAGER", "OPERATOR"
+  status        String         @default("active") // "active", "inactive"
+  avatarUrl     String?        @map("avatar_url")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  company       Company?       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit          Unit?          @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  actionPlans   ActionPlan[]   @relation("ResponsibleUser")
+  trainings     UserTraining[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model ChecklistTemplate {
+  id          String              @id @default(uuid())
+  companyId   String              @map("company_id")
+  title       String
+  description String?
+  sector      String
+  recurrence  String
+  status      String              @default("draft") // "draft", "published", "archived"
+  createdBy   String?             @map("created_by")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+  company     Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  questions   ChecklistQuestion[]
+  schedules   ChecklistSchedule[]
+  runs        ChecklistRun[]
+
+  @@map("checklist_templates")
+}
+
+model ChecklistQuestion {
+  id                           String            @id @default(uuid())
+  checklistTemplateId          String            @map("checklist_template_id")
+  questionText                 String            @map("question_text")
+  questionType                 String            @map("question_type") // "checkbox", "text", "photo", "number"
+  required                     Boolean           @default(false)
+  order                        Int               @default(0)
+  requiresPhoto                Boolean           @default(false) @map("requires_photo")
+  requiresPhotoOnFailure       Boolean           @default(false) @map("requires_photo_on_failure")
+  requiresObservationOnFailure Boolean           @default(false) @map("requires_observation_on_failure")
+  unitMeasure                  String?           @map("unit_measure")
+  minValue                     Float?            @map("min_value")
+  maxValue                     Float?            @map("max_value")
+  idealValue                   Float?            @map("ideal_value")
+  generateOccurrenceOnFailure  Boolean           @default(false) @map("generate_occurrence_on_failure")
+  failureSeverity              String?           @map("failure_severity")
+  createdAt                    DateTime          @default(now()) @map("created_at")
+  updatedAt                    DateTime          @updatedAt @map("updated_at")
+  template                     ChecklistTemplate @relation(fields: [checklistTemplateId], references: [id], onDelete: Cascade)
+  answers                      ChecklistAnswer[]
+
+  @@map("checklist_questions")
+}
+
+model ChecklistSchedule {
+  id                  String            @id @default(uuid())
+  checklistTemplateId String            @map("checklist_template_id")
+  companyId           String            @map("company_id")
+  unitId              String            @map("unit_id")
+  daysOfWeek          String[]          @map("days_of_week")
+  startTime           String            @map("start_time")
+  endTime             String            @map("end_time")
+  assignedRole        String?           @map("assigned_role")
+  assignedUserId      String?           @map("assigned_user_id")
+  status              String            @default("active") // "active", "inactive"
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  template            ChecklistTemplate @relation(fields: [checklistTemplateId], references: [id], onDelete: Cascade)
+  company             Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit                Unit              @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@map("checklist_schedules")
+}
+
+model ChecklistRun {
+  id                  String            @id @default(uuid())
+  checklistTemplateId String            @map("checklist_template_id")
+  companyId           String            @map("company_id")
+  unitId              String            @map("unit_id")
+  assignedTo          String?           @map("assigned_to")
+  status              String            @default("scheduled") // "scheduled", "in_progress", "completed", "late", "cancelled"
+  scheduledAt         DateTime?         @map("scheduled_at")
+  startedAt           DateTime?         @map("started_at")
+  finishedAt          DateTime?         @map("finished_at")
+  score               Float             @default(0.0)
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  template            ChecklistTemplate @relation(fields: [checklistTemplateId], references: [id], onDelete: Cascade)
+  company             Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit                Unit              @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  answers             ChecklistAnswer[]
+  nonConformities     NonConformity[]
+  occurrences         Occurrence[]
+
+  @@map("checklist_runs")
+}
+
+model ChecklistAnswer {
+  id             String            @id @default(uuid())
+  checklistRunId String            @map("checklist_run_id")
+  questionId     String            @map("question_id")
+  answerValue    String?           @map("answer_value")
+  observation    String?
+  isNonConform   Boolean           @default(false) @map("is_non_conform")
+  createdBy      String?           @map("created_by")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  run            ChecklistRun      @relation(fields: [checklistRunId], references: [id], onDelete: Cascade)
+  question       ChecklistQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  evidences      Evidence[]
+  nonConformities NonConformity[]
+  occurrences    Occurrence[]
+
+  @@map("checklist_answers")
+}
+
+model Evidence {
+  id                String          @id @default(uuid())
+  companyId         String          @map("company_id")
+  unitId            String          @map("unit_id")
+  checklistAnswerId String          @map("checklist_answer_id")
+  fileUrl           String          @map("file_url")
+  fileType          String          @map("file_type")
+  fileSize          Int             @map("file_size")
+  uploadedBy        String?         @map("uploaded_by")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  company           Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit              Unit            @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  answer            ChecklistAnswer @relation(fields: [checklistAnswerId], references: [id], onDelete: Cascade)
+
+  @@map("evidences")
+}
+
+model NonConformity {
+  id                String          @id @default(uuid())
+  companyId         String          @map("company_id")
+  unitId            String          @map("unit_id")
+  checklistRunId    String          @map("checklist_run_id")
+  checklistAnswerId String          @map("checklist_answer_id")
+  title             String
+  description       String?
+  severity          String          @default("medium") // "low", "medium", "high", "critical"
+  status            String          @default("open") // "open", "in_progress", "waiting_validation", "resolved", "cancelled"
+  createdBy         String?         @map("created_by")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  company           Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit              Unit            @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  run               ChecklistRun    @relation(fields: [checklistRunId], references: [id], onDelete: Cascade)
+  answer            ChecklistAnswer @relation(fields: [checklistAnswerId], references: [id], onDelete: Cascade)
+  actionPlans       ActionPlan[]
+
+  @@map("non_conformities")
+}
+
+model ActionPlan {
+  id                     String        @id @default(uuid())
+  companyId              String        @map("company_id")
+  unitId                 String        @map("unit_id")
+  nonConformityId        String        @map("non_conformity_id")
+  responsibleUserId      String        @map("responsible_user_id")
+  actionDescription      String        @map("action_description")
+  dueDate                DateTime      @map("due_date")
+  status                 String        @default("pending") // "pending", "in_progress", "completed", "late", "rejected"
+  resolutionEvidenceUrl String?       @map("resolution_evidence_url")
+  closedAt               DateTime?     @map("closed_at")
+  createdAt              DateTime      @default(now()) @map("created_at")
+  updatedAt              DateTime      @updatedAt @map("updated_at")
+  company                Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit                   Unit          @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  nonConformity          NonConformity @relation(fields: [nonConformityId], references: [id], onDelete: Cascade)
+  responsibleUser        User          @relation("ResponsibleUser", fields: [responsibleUserId], references: [id], onDelete: Cascade)
+
+  @@map("action_plans")
+}
+
+model Occurrence {
+  id                         String           @id @default(uuid())
+  companyId                  String           @map("company_id")
+  unitId                     String           @map("unit_id")
+  checklistRunId             String?          @map("checklist_run_id")
+  checklistAnswerId          String?          @map("checklist_answer_id")
+  title                      String
+  description                String?
+  type                       String           @default("manual") // "manual" | "automatic"
+  sector                     String
+  severity                   String           @default("medium") // "low", "medium", "high", "critical"
+  status                     String           @default("open")
+  createdBy                  String?          @map("created_by")
+  createdAt                  DateTime         @default(now()) @map("created_at")
+  updatedAt                  DateTime         @updatedAt @map("updated_at")
+  resolvedAt                 DateTime?        @map("resolved_at")
+  resolvedBy                 String?          @map("resolved_by")
+  closedAt                   DateTime?        @map("closed_at")
+  closedBy                   String?          @map("closed_by")
+  duplicatedFromOccurrenceId String?          @map("duplicated_from_occurrence_id")
+  isLocked                   Boolean          @default(false) @map("is_locked")
+  company                    Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit                       Unit             @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  run                        ChecklistRun?    @relation(fields: [checklistRunId], references: [id], onDelete: Cascade)
+  answer                     ChecklistAnswer? @relation(fields: [checklistAnswerId], references: [id], onDelete: Cascade)
+
+  @@map("occurrences")
+}
+
+model Document {
+  id             String    @id @default(uuid())
+  companyId      String    @map("company_id")
+  unitId         String?   @map("unit_id")
+  title          String
+  description    String?
+  category       String
+  fileUrl        String    @map("file_url")
+  version        String    @default("1.0")
+  expirationDate DateTime? @map("expiration_date")
+  status         String    @default("active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit           Unit?     @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@map("documents")
+}
+
+model Training {
+  id            String         @id @default(uuid())
+  companyId     String         @map("company_id")
+  title         String
+  description   String?
+  requiredRole  String?        @map("required_role")
+  validityDays  Int            @map("validity_days")
+  status        String         @default("active")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  userTrainings UserTraining[]
+
+  @@map("trainings")
+}
+
+model UserTraining {
+  id             String    @id @default(uuid())
+  companyId      String    @map("company_id")
+  userId         String    @map("user_id")
+  trainingId     String    @map("training_id")
+  completedAt    DateTime  @map("completed_at")
+  expiresAt      DateTime? @map("expires_at")
+  certificateUrl String?   @map("certificate_url")
+  status         String    @default("active")
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  training       Training  @relation(fields: [trainingId], references: [id], onDelete: Cascade)
+
+  @@map("user_trainings")
+}
+
+model InventoryItem {
+  id             String    @id @default(uuid())
+  companyId      String    @map("company_id")
+  unitId         String    @map("unit_id")
+  name           String
+  category       String
+  supplierId     String?   @map("supplier_id")
+  minimumStock   Float     @default(0) @map("minimum_stock")
+  currentStock   Float     @default(0) @map("current_stock")
+  unitMeasure    String    @map("unit_measure")
+  expirationDate DateTime? @map("expiration_date")
+  batchNumber    String?   @map("batch_number")
+  status         String    @default("active")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  company        Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit           Unit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  supplier       Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+
+  @@map("inventory_items")
+}
+
+model Supplier {
+  id             String          @id @default(uuid())
+  companyId      String          @map("company_id")
+  name           String
+  cnpj           String?
+  contactName    String?         @map("contact_name")
+  phone          String?
+  email          String?
+  status         String          @default("active")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  inventories    InventoryItem[]
+
+  @@map("suppliers")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  companyId String?  @map("company_id")
+  userId    String?  @map("user_id")
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  oldValue  String?  @map("old_value")
+  newValue  String?  @map("new_value")
+  ipAddress String?  @map("ip_address")
+  createdAt DateTime @default(now()) @map("created_at")
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}

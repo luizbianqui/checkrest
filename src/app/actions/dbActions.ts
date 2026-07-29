@@ -1,0 +1,1426 @@
+"use server";
+
+import prisma from "@/lib/prisma";
+import { cookies } from "next/headers";
+
+/**
+ * Helper to execute a database query. If the database connection details are
+ * placeholders or the query fails, it returns a fallback flag so the client
+ * can switch to offline / localStorage mode.
+ */
+async function runWithConnectionCheck<T>(
+  fn: () => Promise<T>
+): Promise<{ success: boolean; data?: T; fallback?: boolean; error?: string }> {
+  const dbUrl = process.env.DATABASE_URL || "";
+  
+  // Detect placeholder settings
+  if (
+    dbUrl.includes("[PASSWORD]") ||
+    dbUrl.includes("[PROJECT-REF]") ||
+    dbUrl.includes("your-project-id") ||
+    !dbUrl
+  ) {
+    return {
+      success: false,
+      fallback: true,
+      error: "Banco de dados utilizando credenciais de placeholder."
+    };
+  }
+
+  try {
+    const res = await fn();
+    return { success: true, data: res };
+  } catch (e: unknown) {
+    console.error("Erro na consulta do banco de dados:", e);
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    return {
+      success: false,
+      fallback: true,
+      error: errorMsg
+    };
+  }
+}
+
+async function logAudit(data: {
+  companyId: string | null;
+  userId: string | null;
+  action: string;
+  entity: string;
+  entityId: string | null;
+  oldValue: string | null;
+  newValue: string | null;
+}) {
+  try {
+    await prisma.auditLog.create({
+      data: {
+        companyId: data.companyId,
+        userId: data.userId,
+        action: data.action,
+        entity: data.entity,
+        entityId: data.entityId,
+        oldValue: data.oldValue,
+        newValue: data.newValue,
+        ipAddress: "127.0.0.1"
+      }
+    });
+  } catch (e) {
+    console.error("Erro ao registrar log de auditoria:", e);
+  }
+}
+
+/**
+ * Logs a user login action.
+ */
+export async function logLoginAction(userId: string, companyId: string | null) {
+  return runWithConnectionCheck(async () => {
+    await logAudit({
+      companyId,
+      userId,
+      action: "LOGIN",
+      entity: "User",
+      entityId: userId,
+      oldValue: null,
+      newValue: "Login realizado com sucesso"
+    });
+    return { success: true };
+  });
+}
+
+/**
+ * Logs a report export action.
+ */
+export async function logReportExportAction(data: {
+  companyId: string | null;
+  userId: string | null;
+  reportType: string;
+  format: string;
+}) {
+  return runWithConnectionCheck(async () => {
+    await logAudit({
+      companyId: data.companyId,
+      userId: data.userId,
+      action: "REPORT_EXPORT",
+      entity: "Report",
+      entityId: data.reportType,
+      oldValue: null,
+      newValue: `Relatório: ${data.reportType} | Formato: ${data.format}`
+    });
+    return { success: true };
+  });
+}
+
+/**
+ * Retrieves audit logs. SAAS_ADMIN sees all, COMPANY_ADMIN only their company.
+ */
+export async function getAuditLogsAction(companyId: string | null) {
+  return runWithConnectionCheck(async () => {
+    if (companyId) {
+      return prisma.auditLog.findMany({
+        where: { companyId },
+        include: {
+          user: {
+            select: { name: true, email: true }
+          },
+          company: {
+            select: { name: true }
+          }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+    }
+    return prisma.auditLog.findMany({
+      include: {
+        user: {
+          select: { name: true, email: true }
+        },
+        company: {
+          select: { name: true }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Verifies if the database is configured and reachable.
+ */
+export async function checkDatabaseConnection() {
+  return runWithConnectionCheck(async () => {
+    // Run a cheap query to check connection
+    const userCount = await prisma.user.count();
+    return { connected: true, userCount };
+  });
+}
+
+/**
+ * Authenticates a user by email, retrieving their company and unit profile.
+ */
+export async function authenticateUserAction(email: string) {
+  return runWithConnectionCheck(async () => {
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: {
+        company: true,
+        unit: true
+      }
+    });
+    return user;
+  });
+}
+
+/**
+ * Validates credentials and sets a session cookie.
+ */
+export async function loginUserAction(email: string, password: string) {
+  return runWithConnectionCheck(async () => {
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: {
+        company: true,
+        unit: true
+      }
+    });
+
+    if (!user) {
+      throw new Error("Usuário não encontrado.");
+    }
+
+    // Validação de senha: compara a senha com o banco
+    const isValid = user.passwordHash === password;
+    if (!isValid) {
+      throw new Error("Senha incorreta.");
+    }
+
+    const sessionData = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      companyId: user.companyId,
+      unitId: user.unitId,
+      avatarUrl: user.avatarUrl,
+      status: user.status
+    };
+
+    cookies().set("checkrest_session", JSON.stringify(sessionData), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 7, // 7 days
+      path: "/"
+    });
+
+    return sessionData;
+  });
+}
+
+/**
+ * Destroys the user session by deleting the cookie.
+ */
+export async function logoutUserAction() {
+  try {
+    cookies().delete("checkrest_session");
+    return { success: true };
+  } catch (e) {
+    console.error("Erro ao fazer logout:", e);
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Retrieves the current session user from the cookie.
+ */
+export async function getCurrentSessionUser() {
+  try {
+    const cookieStore = cookies();
+    const session = cookieStore.get("checkrest_session");
+    if (!session || !session.value) {
+      return { success: true, data: null };
+    }
+    const user = JSON.parse(session.value);
+    return { success: true, data: user };
+  } catch (e) {
+    console.error("Erro ao obter sessão:", e);
+    return { success: false, error: String(e) };
+  }
+}
+
+/**
+ * Retrieves all registered companies (visible to SAAS_ADMIN).
+ */
+export async function getCompaniesAction() {
+  return runWithConnectionCheck(async () => {
+    return prisma.company.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Creates a new company/tenant (SAAS_ADMIN only).
+ */
+export async function createCompanyAction(data: {
+  name: string;
+  cnpj: string;
+  plan: string;
+}) {
+  return runWithConnectionCheck(async () => {
+    return prisma.company.create({
+      data: {
+        name: data.name,
+        cnpj: data.cnpj,
+        plan: data.plan,
+        status: "active"
+      }
+    });
+  });
+}
+
+/**
+ * Suspends or activates a company status.
+ */
+export async function toggleCompanyStatusAction(id: string, currentStatus: string) {
+  return runWithConnectionCheck(async () => {
+    const nextStatus = currentStatus === "active" ? "inactive" : "active";
+    return prisma.company.update({
+      where: { id },
+      data: { status: nextStatus }
+    });
+  });
+}
+
+/**
+ * Retrieves all units, optionally filtered by company ID.
+ */
+export async function getUnitsAction(companyId: string | null) {
+  return runWithConnectionCheck(async () => {
+    if (companyId) {
+      return prisma.unit.findMany({
+        where: { companyId },
+        orderBy: { createdAt: "desc" }
+      });
+    }
+    return prisma.unit.findMany({
+      orderBy: { createdAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Creates a new unit/branch for a company.
+ */
+export async function createUnitAction(data: {
+  companyId: string;
+  name: string;
+  address: string;
+  managerName: string;
+  performedByUserId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    const unit = await prisma.unit.create({
+      data: {
+        companyId: data.companyId,
+        name: data.name,
+        address: data.address,
+        managerName: data.managerName,
+        status: "active"
+      }
+    });
+    await logAudit({
+      companyId: data.companyId,
+      userId: data.performedByUserId || null,
+      action: "UNIT_CREATE",
+      entity: "Unit",
+      entityId: unit.id,
+      oldValue: null,
+      newValue: JSON.stringify({ name: unit.name, managerName: unit.managerName })
+    });
+    return unit;
+  });
+}
+
+/**
+ * Deactivates or activates a unit.
+ */
+export async function toggleUnitStatusAction(id: string, currentStatus: string, performedByUserId?: string | null) {
+  return runWithConnectionCheck(async () => {
+    const nextStatus = currentStatus === "active" ? "inactive" : "active";
+    const unit = await prisma.unit.update({
+      where: { id },
+      data: { status: nextStatus }
+    });
+    await logAudit({
+      companyId: unit.companyId,
+      userId: performedByUserId || null,
+      action: "UNIT_STATUS_CHANGE",
+      entity: "Unit",
+      entityId: unit.id,
+      oldValue: currentStatus,
+      newValue: nextStatus
+    });
+    return unit;
+  });
+}
+
+/**
+ * Retrieves all team members, optionally filtered by company.
+ */
+export async function getUsersAction(companyId: string | null) {
+  return runWithConnectionCheck(async () => {
+    if (companyId) {
+      return prisma.user.findMany({
+        where: { companyId },
+        include: { unit: true },
+        orderBy: { createdAt: "desc" }
+      });
+    }
+    return prisma.user.findMany({
+      include: { unit: true, company: true },
+      orderBy: { createdAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Registers/invites a new collaborator to a company and unit.
+ */
+export async function createUserAction(data: {
+  companyId: string;
+  name: string;
+  email: string;
+  role: string;
+  unitId?: string | null;
+  passwordHash?: string;
+  performedByUserId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    const user = await prisma.user.create({
+      data: {
+        companyId: data.companyId,
+        name: data.name,
+        email: data.email,
+        role: data.role,
+        passwordHash: data.passwordHash || "bobs123",
+        unitId: data.unitId || null,
+        status: "active"
+      }
+    });
+    await logAudit({
+      companyId: data.companyId,
+      userId: data.performedByUserId || null,
+      action: "USER_CREATE",
+      entity: "User",
+      entityId: user.id,
+      oldValue: null,
+      newValue: JSON.stringify({ name: user.name, email: user.email, role: user.role, status: user.status })
+    });
+    return user;
+  });
+}
+
+/**
+ * Suspends or activates a user account.
+ */
+export async function toggleUserStatusAction(id: string, currentStatus: string, performedByUserId?: string | null) {
+  return runWithConnectionCheck(async () => {
+    const nextStatus = currentStatus === "active" ? "inactive" : "active";
+    const user = await prisma.user.update({
+      where: { id },
+      data: { status: nextStatus }
+    });
+    await logAudit({
+      companyId: user.companyId,
+      userId: performedByUserId || null,
+      action: "USER_STATUS_CHANGE",
+      entity: "User",
+      entityId: user.id,
+      oldValue: currentStatus,
+      newValue: nextStatus
+    });
+    return user;
+  });
+}
+
+/**
+ * Retrieves all checklist templates, optionally filtered by company.
+ */
+export async function getChecklistsAction(companyId: string | null) {
+  return runWithConnectionCheck(async () => {
+    if (companyId) {
+      return prisma.checklistTemplate.findMany({
+        where: { companyId },
+        include: {
+          questions: { orderBy: { order: "asc" } },
+          schedules: true
+        },
+        orderBy: { updatedAt: "desc" }
+      });
+    }
+    return prisma.checklistTemplate.findMany({
+      include: {
+        questions: { orderBy: { order: "asc" } },
+        schedules: true
+      },
+      orderBy: { updatedAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Creates or updates a checklist template (atomic transaction).
+ */
+export async function upsertChecklistAction(data: {
+  id: string;
+  companyId: string;
+  title: string;
+  sector: string;
+  recurrence: string;
+  status: string;
+  version: string;
+  activeDays: string[];
+  startTime: string;
+  endTime: string;
+  responsible: string;
+  questions: {
+    id?: string;
+    title: string;
+    type: string;
+  }[];
+  performedByUserId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    const isNew = data.id === "new" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.id);
+    const dbStatus = data.status === "active" ? "published" : data.status;
+
+    if (isNew) {
+      return prisma.$transaction(async (tx) => {
+        const template = await tx.checklistTemplate.create({
+          data: {
+            companyId: data.companyId,
+            title: data.title,
+            sector: data.sector,
+            recurrence: data.recurrence,
+            status: dbStatus,
+            description: `Versão ${data.version}`,
+            questions: {
+              create: data.questions.map((q, idx) => ({
+                questionText: q.title,
+                questionType: q.type,
+                order: idx,
+                required: true,
+                requiresPhoto: q.type === "photo"
+              }))
+            }
+          }
+        });
+
+        const firstUnit = await tx.unit.findFirst({
+          where: { companyId: data.companyId }
+        });
+
+        if (firstUnit) {
+          await tx.checklistSchedule.create({
+            data: {
+              checklistTemplateId: template.id,
+              companyId: data.companyId,
+              unitId: firstUnit.id,
+              daysOfWeek: data.activeDays,
+              startTime: data.startTime,
+              endTime: data.endTime,
+              status: "active"
+            }
+          });
+        }
+
+        await tx.auditLog.create({
+          data: {
+            companyId: data.companyId,
+            userId: data.performedByUserId || null,
+            action: "CHECKLIST_CREATE",
+            entity: "ChecklistTemplate",
+            entityId: template.id,
+            oldValue: null,
+            newValue: JSON.stringify({ title: template.title, status: dbStatus }),
+            ipAddress: "127.0.0.1"
+          }
+        });
+
+        return tx.checklistTemplate.findUnique({
+          where: { id: template.id },
+          include: {
+            questions: { orderBy: { order: "asc" } },
+            schedules: true
+          }
+        });
+      });
+    } else {
+      return prisma.$transaction(async (tx) => {
+        const oldTemplate = await tx.checklistTemplate.findUnique({
+          where: { id: data.id }
+        });
+
+        await tx.checklistTemplate.update({
+          where: { id: data.id },
+          data: {
+            title: data.title,
+            sector: data.sector,
+            recurrence: data.recurrence,
+            status: dbStatus,
+            description: `Versão ${data.version}`
+          }
+        });
+
+        await tx.checklistQuestion.deleteMany({
+          where: { checklistTemplateId: data.id }
+        });
+
+        await tx.checklistQuestion.createMany({
+          data: data.questions.map((q, idx) => ({
+            checklistTemplateId: data.id,
+            questionText: q.title,
+            questionType: q.type,
+            order: idx,
+            required: true,
+            requiresPhoto: q.type === "photo"
+          }))
+        });
+
+        const schedule = await tx.checklistSchedule.findFirst({
+          where: { checklistTemplateId: data.id }
+        });
+
+        if (schedule) {
+          await tx.checklistSchedule.update({
+            where: { id: schedule.id },
+            data: {
+              daysOfWeek: data.activeDays,
+              startTime: data.startTime,
+              endTime: data.endTime
+            }
+          });
+        } else {
+          const firstUnit = await tx.unit.findFirst({
+            where: { companyId: data.companyId }
+          });
+          if (firstUnit) {
+            await tx.checklistSchedule.create({
+              data: {
+                checklistTemplateId: data.id,
+                companyId: data.companyId,
+                unitId: firstUnit.id,
+                daysOfWeek: data.activeDays,
+                startTime: data.startTime,
+                endTime: data.endTime,
+                status: "active"
+              }
+            });
+          }
+        }
+
+        await tx.auditLog.create({
+          data: {
+            companyId: data.companyId,
+            userId: data.performedByUserId || null,
+            action: oldTemplate?.status !== dbStatus && dbStatus === "published" ? "CHECKLIST_PUBLISH" : "CHECKLIST_UPDATE",
+            entity: "ChecklistTemplate",
+            entityId: data.id,
+            oldValue: oldTemplate ? JSON.stringify({ title: oldTemplate.title, status: oldTemplate.status }) : null,
+            newValue: JSON.stringify({ title: data.title, status: dbStatus }),
+            ipAddress: "127.0.0.1"
+          }
+        });
+
+        return tx.checklistTemplate.findUnique({
+          where: { id: data.id },
+          include: {
+            questions: { orderBy: { order: "asc" } },
+            schedules: true
+          }
+        });
+      });
+    }
+  });
+}
+
+/**
+ * Archives a checklist template.
+ */
+export async function archiveChecklistAction(id: string, performedByUserId?: string | null) {
+  return runWithConnectionCheck(async () => {
+    const template = await prisma.checklistTemplate.update({
+      where: { id },
+      data: { status: "archived" }
+    });
+    await logAudit({
+      companyId: template.companyId,
+      userId: performedByUserId || null,
+      action: "CHECKLIST_ARCHIVE",
+      entity: "ChecklistTemplate",
+      entityId: template.id,
+      oldValue: "published",
+      newValue: "archived"
+    });
+    return template;
+  });
+}
+
+/**
+ * Registers/Submits a checklist run execution along with its answers.
+ */
+export async function createChecklistRunAction(data: {
+  checklistTemplateId: string;
+  companyId: string;
+  unitId: string;
+  assignedTo: string | null;
+  score: number;
+  answers: {
+    questionId: string;
+    answerValue: string;
+    isNonConform: boolean;
+    observation?: string;
+  }[];
+  performedByUserId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    return prisma.$transaction(async (tx) => {
+      // 1. Criar a execução do checklist
+      const run = await tx.checklistRun.create({
+        data: {
+          checklistTemplateId: data.checklistTemplateId,
+          companyId: data.companyId,
+          unitId: data.unitId,
+          assignedTo: data.assignedTo,
+          status: "completed",
+          startedAt: new Date(),
+          finishedAt: new Date(),
+          score: data.score
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          companyId: data.companyId,
+          userId: data.performedByUserId || null,
+          action: "CHECKLIST_RUN_SUBMIT",
+          entity: "ChecklistRun",
+          entityId: run.id,
+          oldValue: null,
+          newValue: JSON.stringify({ score: data.score, status: "completed" }),
+          ipAddress: "127.0.0.1"
+        }
+      });
+
+      // 2. Criar as respostas e, se forem não-conformes, gerar a não-conformidade
+      for (const ans of data.answers) {
+        const question = await tx.checklistQuestion.findUnique({
+          where: { id: ans.questionId }
+        });
+        const questionText = question?.questionText || "Questão do Checklist";
+
+        const dbAnswer = await tx.checklistAnswer.create({
+          data: {
+            checklistRunId: run.id,
+            questionId: ans.questionId,
+            answerValue: ans.answerValue,
+            isNonConform: ans.isNonConform,
+            observation: ans.observation || null
+          }
+        });
+
+        if (ans.isNonConform) {
+          // 1. Sempre gerar não-conformidade automática para qualquer falha
+          const nc = await tx.nonConformity.create({
+            data: {
+              companyId: data.companyId,
+              unitId: data.unitId,
+              checklistRunId: run.id,
+              checklistAnswerId: dbAnswer.id,
+              title: `Não Conformidade: ${questionText}`,
+              description: ans.observation || `A resposta fornecida foi não conforme. Valor registrado: ${ans.answerValue}`,
+              severity: (question && question.questionType === "number") ? (question.failureSeverity || "medium") : "medium",
+              status: "open",
+              createdBy: data.assignedTo
+            }
+          });
+
+          await tx.auditLog.create({
+            data: {
+              companyId: data.companyId,
+              userId: data.performedByUserId || null,
+              action: "NON_CONFORMITY_AUTO_CREATE",
+              entity: "NonConformity",
+              entityId: nc.id,
+              oldValue: null,
+              newValue: JSON.stringify({ title: nc.title, severity: nc.severity }),
+              ipAddress: "127.0.0.1"
+            }
+          });
+
+          // 2. Se for pergunta do tipo número e configurada para gerar ocorrência na falha, gerar ocorrência também
+          if (question && question.questionType === "number" && question.generateOccurrenceOnFailure) {
+            const minStr = question.minValue !== null ? String(question.minValue) : "-";
+            const maxStr = question.maxValue !== null ? String(question.maxValue) : "-";
+            const templateObj = await tx.checklistTemplate.findUnique({ where: { id: data.checklistTemplateId } });
+            
+            const occ = await tx.occurrence.create({
+              data: {
+                companyId: data.companyId,
+                unitId: data.unitId,
+                checklistRunId: run.id,
+                checklistAnswerId: dbAnswer.id,
+                title: `Ocorrência automática: ${questionText}`,
+                description: `Valor fora da faixa permitida. Registrado: ${ans.answerValue} ${question.unitMeasure || ""}. Limites: [${minStr}, ${maxStr}]. Observação: ${ans.observation || "Nenhuma"}`,
+                sector: templateObj?.sector || "Geral",
+                severity: question.failureSeverity || "medium",
+                status: "open",
+                createdBy: data.assignedTo || "Sistema",
+                type: "automatic"
+              }
+            });
+
+            await tx.auditLog.create({
+              data: {
+                companyId: data.companyId,
+                userId: data.performedByUserId || null,
+                action: "OCCURRENCE_AUTO_CREATE",
+                entity: "Occurrence",
+                entityId: occ.id,
+                oldValue: null,
+                newValue: JSON.stringify({ title: occ.title, severity: occ.severity }),
+                ipAddress: "127.0.0.1"
+              }
+            });
+          }
+        }
+      }
+
+      return tx.checklistRun.findUnique({
+        where: { id: run.id },
+        include: {
+          answers: true
+        }
+      });
+    });
+  });
+}
+
+/**
+ * Retrieves checklist runs, optionally filtered by company.
+ */
+export async function getChecklistRunsAction(companyId: string | null) {
+  return runWithConnectionCheck(async () => {
+    if (companyId) {
+      return prisma.checklistRun.findMany({
+        where: { companyId },
+        include: {
+          template: true,
+          unit: true,
+          answers: {
+            include: {
+              question: true
+            }
+          }
+        },
+        orderBy: { finishedAt: "desc" }
+      });
+    }
+    return prisma.checklistRun.findMany({
+      include: {
+        template: true,
+        unit: true,
+        answers: {
+          include: {
+            question: true
+          }
+        }
+      },
+      orderBy: { finishedAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Retrieves non-conformities, optionally filtered by company.
+ */
+export async function getNonConformitiesAction(companyId: string | null) {
+  return runWithConnectionCheck(async () => {
+    if (companyId) {
+      return prisma.nonConformity.findMany({
+        where: { companyId },
+        include: {
+          unit: true,
+          run: { include: { template: true } },
+          answer: { include: { question: true } },
+          actionPlans: { include: { responsibleUser: true } }
+        },
+        orderBy: { createdAt: "desc" }
+      });
+    }
+    return prisma.nonConformity.findMany({
+      include: {
+        unit: true,
+        run: { include: { template: true } },
+        answer: { include: { question: true } },
+        actionPlans: { include: { responsibleUser: true } }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Updates status of a non-conformity.
+ */
+export async function updateNonConformityStatusAction(id: string, status: string) {
+  return runWithConnectionCheck(async () => {
+    return prisma.nonConformity.update({
+      where: { id },
+      data: { status }
+    });
+  });
+}
+
+/**
+ * Retrieves all action plans, optionally filtered by company.
+ */
+export async function getActionPlansAction(companyId: string | null) {
+  return runWithConnectionCheck(async () => {
+    if (companyId) {
+      return prisma.actionPlan.findMany({
+        where: { companyId },
+        include: {
+          unit: true,
+          nonConformity: true,
+          responsibleUser: true
+        },
+        orderBy: { createdAt: "desc" }
+      });
+    }
+    return prisma.actionPlan.findMany({
+      include: {
+        unit: true,
+        nonConformity: true,
+        responsibleUser: true
+      },
+      orderBy: { createdAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Creates or updates an action plan.
+ */
+export async function createActionPlanAction(data: {
+  companyId: string;
+  unitId: string;
+  nonConformityId: string;
+  responsibleUserId: string;
+  actionDescription: string;
+  dueDate: Date;
+  performedByUserId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    return prisma.$transaction(async (tx) => {
+      const plan = await tx.actionPlan.create({
+        data: {
+          companyId: data.companyId,
+          unitId: data.unitId,
+          nonConformityId: data.nonConformityId,
+          responsibleUserId: data.responsibleUserId,
+          actionDescription: data.actionDescription,
+          dueDate: data.dueDate,
+          status: "pending"
+        }
+      });
+
+      // Update non-conformity status to 'in_progress'
+      await tx.nonConformity.update({
+        where: { id: data.nonConformityId },
+        data: { status: "in_progress" }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          companyId: data.companyId,
+          userId: data.performedByUserId || null,
+          action: "ACTION_PLAN_CREATE",
+          entity: "ActionPlan",
+          entityId: plan.id,
+          oldValue: null,
+          newValue: JSON.stringify({ actionDescription: plan.actionDescription, status: plan.status }),
+          ipAddress: "127.0.0.1"
+        }
+      });
+
+      return plan;
+    });
+  });
+}
+
+/**
+ * Updates the status of an action plan (including uploading evidence URL or closing).
+ */
+export async function updateActionPlanAction(id: string, status: string, resolutionEvidenceUrl?: string, performedByUserId?: string | null) {
+  return runWithConnectionCheck(async () => {
+    const oldPlan = await prisma.actionPlan.findUnique({ where: { id } });
+    const isCompleted = status === "completed";
+    const plan = await prisma.actionPlan.update({
+      where: { id },
+      data: {
+        status,
+        resolutionEvidenceUrl: resolutionEvidenceUrl || null,
+        closedAt: isCompleted ? new Date() : null
+      }
+    });
+
+    await logAudit({
+      companyId: plan.companyId,
+      userId: performedByUserId || null,
+      action: "ACTION_PLAN_UPDATE",
+      entity: "ActionPlan",
+      entityId: plan.id,
+      oldValue: oldPlan ? JSON.stringify({ status: oldPlan.status, evidence: oldPlan.resolutionEvidenceUrl }) : null,
+      newValue: JSON.stringify({ status: plan.status, evidence: plan.resolutionEvidenceUrl })
+    });
+
+    return plan;
+  });
+}
+
+/**
+ * Retrieves aggregate metrics for the dashboard.
+ */
+export async function getDashboardDataAction(
+  companyId: string | null,
+  unitId?: string | null,
+  period?: string,
+  specificDate?: string,
+  startDate?: string,
+  endDate?: string
+) {
+  return runWithConnectionCheck(async () => {
+    let dateFilter: Date | undefined;
+    let dateLtFilter: Date | undefined;
+
+    if (period === "Hoje") {
+      dateFilter = new Date();
+      dateFilter.setHours(0, 0, 0, 0);
+      dateLtFilter = new Date();
+      dateLtFilter.setHours(23, 59, 59, 999);
+    } else if (period === "Ontem") {
+      dateFilter = new Date();
+      dateFilter.setDate(dateFilter.getDate() - 1);
+      dateFilter.setHours(0, 0, 0, 0);
+      dateLtFilter = new Date();
+      dateLtFilter.setDate(dateLtFilter.getDate() - 1);
+      dateLtFilter.setHours(23, 59, 59, 999);
+    } else if (period === "Últimos 30 dias") {
+      dateFilter = new Date();
+      dateFilter.setDate(dateFilter.getDate() - 30);
+      dateFilter.setHours(0, 0, 0, 0);
+    } else if (period === "Mês atual" || period === "Este Mês") {
+      dateFilter = new Date();
+      dateFilter.setDate(1); // Start of current month
+      dateFilter.setHours(0, 0, 0, 0);
+    } else if (period === "Mês anterior") {
+      dateFilter = new Date();
+      dateFilter.setMonth(dateFilter.getMonth() - 1);
+      dateFilter.setDate(1);
+      dateFilter.setHours(0, 0, 0, 0);
+      dateLtFilter = new Date();
+      dateLtFilter.setDate(0); // Last day of previous month
+      dateLtFilter.setHours(23, 59, 59, 999);
+    } else if (period === "Data específica" && specificDate) {
+      dateFilter = new Date(specificDate + "T00:00:00");
+      dateLtFilter = new Date(specificDate + "T23:59:59");
+    } else if (period === "Período personalizado" && startDate && endDate) {
+      dateFilter = new Date(startDate + "T00:00:00");
+      dateLtFilter = new Date(endDate + "T23:59:59");
+    } else {
+      // Default: "Últimos 7 dias"
+      dateFilter = new Date();
+      dateFilter.setDate(dateFilter.getDate() - 7);
+      dateFilter.setHours(0, 0, 0, 0);
+    }
+
+    const whereClause: { companyId?: string; unitId?: string; finishedAt?: { gte?: Date; lte?: Date } } = {};
+    if (companyId) whereClause.companyId = companyId;
+    if (unitId) whereClause.unitId = unitId;
+    if (dateFilter || dateLtFilter) {
+      whereClause.finishedAt = {};
+      if (dateFilter) whereClause.finishedAt.gte = dateFilter;
+      if (dateLtFilter) whereClause.finishedAt.lte = dateLtFilter;
+    }
+
+    const nonConformsWhere: { companyId?: string; unitId?: string; createdAt?: { gte?: Date; lte?: Date } } = {};
+    if (companyId) nonConformsWhere.companyId = companyId;
+    if (unitId) nonConformsWhere.unitId = unitId;
+    if (dateFilter || dateLtFilter) {
+      nonConformsWhere.createdAt = {};
+      if (dateFilter) nonConformsWhere.createdAt.gte = dateFilter;
+      if (dateLtFilter) nonConformsWhere.createdAt.lte = dateLtFilter;
+    }
+
+    const actionPlansWhere: { companyId?: string; unitId?: string; createdAt?: { gte?: Date; lte?: Date } } = {};
+    if (companyId) actionPlansWhere.companyId = companyId;
+    if (unitId) actionPlansWhere.unitId = unitId;
+    if (dateFilter || dateLtFilter) {
+      actionPlansWhere.createdAt = {};
+      if (dateFilter) actionPlansWhere.createdAt.gte = dateFilter;
+      if (dateLtFilter) actionPlansWhere.createdAt.lte = dateLtFilter;
+    }
+
+    const [runs, nonConforms, actionPlans] = await Promise.all([
+      prisma.checklistRun.findMany({
+        where: whereClause,
+        orderBy: { finishedAt: "desc" }
+      }),
+      prisma.nonConformity.findMany({
+        where: nonConformsWhere
+      }),
+      prisma.actionPlan.findMany({
+        where: actionPlansWhere
+      })
+    ]);
+
+    const completedCount = runs.filter(r => r.status === "completed").length;
+    const inProgressCount = runs.filter(r => r.status === "in_progress").length;
+    const scheduledCount = runs.filter(r => r.status === "scheduled").length;
+    const lateCount = runs.filter(r => r.status === "late").length;
+
+    const totalRuns = runs.length;
+    const avgScore = totalRuns > 0 
+      ? parseFloat((runs.reduce((acc, r) => acc + r.score, 0) / totalRuns).toFixed(1))
+      : 0;
+
+    const openNonConforms = nonConforms.filter(nc => nc.status === "open").length;
+    const criticalNonConforms = nonConforms.filter(nc => nc.severity === "critical").length;
+    
+    const pendingActionPlans = actionPlans.filter(ap => ap.status === "pending").length;
+
+    // 1. Weekly Score Evolution calculation
+    const weekdayNames = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SAB"];
+    const weekdayScores = weekdayNames.map(day => ({ day, totalScore: 0, count: 0 }));
+
+    runs.forEach(r => {
+      if (r.finishedAt || r.startedAt) {
+        const date = new Date(r.finishedAt || r.startedAt || "");
+        const dayName = weekdayNames[date.getDay()];
+        const dayObj = weekdayScores.find(d => d.day === dayName);
+        if (dayObj) {
+          dayObj.totalScore += r.score;
+          dayObj.count += 1;
+        }
+      }
+    });
+
+    const order = ["SEG", "TER", "QUA", "QUI", "SEX", "SAB", "DOM"];
+    const weeklyScores = order.map(dayName => {
+      const dayObj = weekdayScores.find(d => d.day === dayName);
+      const val = dayObj && dayObj.count > 0 ? Math.round(dayObj.totalScore / dayObj.count) : 0;
+      return { day: dayName, val };
+    });
+
+    // 2. Operator Ranking calculation
+    const operatorMap: { [name: string]: { totalScore: number; count: number } } = {};
+    runs.forEach(r => {
+      if (r.assignedTo) {
+        if (!operatorMap[r.assignedTo]) {
+          operatorMap[r.assignedTo] = { totalScore: 0, count: 0 };
+        }
+        operatorMap[r.assignedTo].totalScore += r.score;
+        operatorMap[r.assignedTo].count += 1;
+      }
+    });
+
+    const operatorRanking = Object.entries(operatorMap).map(([name, data]) => {
+      const initials = name
+        .split(" ")
+        .map(n => n[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase();
+      return {
+        name,
+        initials,
+        score: Math.round(data.totalScore / data.count),
+        color: "bg-slate-100 text-slate-800"
+      };
+    }).sort((a, b) => b.score - a.score);
+
+    return {
+      completedCount,
+      inProgressCount,
+      scheduledCount,
+      lateCount,
+      avgScore,
+      openNonConforms,
+      criticalNonConforms,
+      pendingActionPlans,
+      weeklyScores,
+      operatorRanking
+    };
+  });
+}
+
+/**
+ * Retrieves occurrences, applying hierarchical tenant filters.
+ */
+export async function getOccurrencesAction(companyId: string | null, unitId?: string | null) {
+  return runWithConnectionCheck(async () => {
+    const where: { companyId?: string; unitId?: string } = {};
+    if (companyId) {
+      where.companyId = companyId;
+    }
+    if (unitId) {
+      where.unitId = unitId;
+    }
+    return prisma.occurrence.findMany({
+      where,
+      include: {
+        unit: {
+          select: { name: true }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Creates a new occurrence and logs the audit event.
+ */
+export async function createOccurrenceAction(data: {
+  companyId: string;
+  unitId: string;
+  title: string;
+  description?: string | null;
+  sector: string;
+  severity: string;
+  createdBy: string;
+  performedByUserId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    const occurrence = await prisma.occurrence.create({
+      data: {
+        companyId: data.companyId,
+        unitId: data.unitId,
+        title: data.title,
+        description: data.description || null,
+        sector: data.sector,
+        severity: data.severity,
+        status: "open",
+        createdBy: data.createdBy
+      },
+      include: {
+        unit: {
+          select: { name: true }
+        }
+      }
+    });
+
+    await logAudit({
+      companyId: data.companyId,
+      userId: data.performedByUserId || null,
+      action: "OCCURRENCE_CREATE",
+      entity: "Occurrence",
+      entityId: occurrence.id,
+      oldValue: null,
+      newValue: JSON.stringify({ title: occurrence.title, severity: occurrence.severity, unitId: occurrence.unitId })
+    });
+
+    return occurrence;
+  });
+}
+
+/**
+ * Updates an occurrence status and logs the audit event.
+ */
+export async function updateOccurrenceStatusAction(
+  id: string,
+  status: string,
+  performedByUserId?: string | null,
+  userName?: string | null
+) {
+  return runWithConnectionCheck(async () => {
+    const oldOcc = await prisma.occurrence.findUnique({ where: { id } });
+    if (oldOcc?.isLocked) {
+      throw new Error("Ocorrência fechada/bloqueada não pode ser reaberta ou alterada.");
+    }
+
+    const isClosing = status === "resolved" || status === "cancelled";
+
+    const occurrence = await prisma.occurrence.update({
+      where: { id },
+      data: { 
+        status,
+        resolvedAt: isClosing ? new Date() : undefined,
+        resolvedBy: isClosing ? (userName || "Usuário") : undefined,
+        closedAt: isClosing ? new Date() : undefined,
+        closedBy: isClosing ? (userName || "Usuário") : undefined,
+        isLocked: isClosing ? true : undefined
+      }
+    });
+
+    await logAudit({
+      companyId: occurrence.companyId,
+      userId: performedByUserId || null,
+      action: "OCCURRENCE_STATUS_CHANGE",
+      entity: "Occurrence",
+      entityId: occurrence.id,
+      oldValue: oldOcc ? oldOcc.status : null,
+      newValue: status
+    });
+
+    return occurrence;
+  });
+}
+
+/**
+ * Duplicates a resolved or cancelled occurrence.
+ */
+export async function duplicateOccurrenceAction(
+  originalId: string,
+  newTitle: string,
+  newDescription: string,
+  performedByUserId?: string | null,
+  userName?: string | null
+) {
+  return runWithConnectionCheck(async () => {
+    const original = await prisma.occurrence.findUnique({ where: { id: originalId } });
+    if (!original) throw new Error("Ocorrência original não encontrada");
+
+    const occurrence = await prisma.occurrence.create({
+      data: {
+        companyId: original.companyId,
+        unitId: original.unitId,
+        title: newTitle,
+        description: newDescription,
+        sector: original.sector,
+        severity: original.severity,
+        status: "open",
+        createdBy: userName || original.createdBy,
+        duplicatedFromOccurrenceId: original.id,
+        isLocked: false
+      },
+      include: {
+        unit: {
+          select: { name: true }
+        }
+      }
+    });
+
+    await logAudit({
+      companyId: occurrence.companyId,
+      userId: performedByUserId || null,
+      action: "OCCURRENCE_DUPLICATE",
+      entity: "Occurrence",
+      entityId: occurrence.id,
+      oldValue: original.id,
+      newValue: JSON.stringify({ title: occurrence.title, severity: occurrence.severity })
+    });
+
+    return occurrence;
+  });
+}
+
+/**
+ * Retrieves documents, bringing both global and specific unit documents.
+ */
+export async function getDocumentsAction(companyId: string | null, unitId?: string | null) {
+  return runWithConnectionCheck(async () => {
+    const where: { companyId?: string; OR?: Array<{ unitId: string | null }> } = {};
+    if (companyId) {
+      where.companyId = companyId;
+    }
+    if (unitId) {
+      where.OR = [
+        { unitId: null },
+        { unitId: unitId }
+      ];
+    }
+    return prisma.document.findMany({
+      where,
+      include: {
+        unit: {
+          select: { name: true }
+        }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+  });
+}
+
+/**
+ * Creates a new document and logs the audit event.
+ */
+export async function createDocumentAction(data: {
+  companyId: string;
+  unitId?: string | null;
+  title: string;
+  description?: string | null;
+  category: string;
+  fileUrl: string;
+  version?: string;
+  expirationDate?: Date | null;
+  performedByUserId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    const document = await prisma.document.create({
+      data: {
+        companyId: data.companyId,
+        unitId: data.unitId || null,
+        title: data.title,
+        description: data.description || null,
+        category: data.category,
+        fileUrl: data.fileUrl,
+        version: data.version || "1.0",
+        expirationDate: data.expirationDate || null,
+        status: "active"
+      },
+      include: {
+        unit: {
+          select: { name: true }
+        }
+      }
+    });
+
+    await logAudit({
+      companyId: data.companyId,
+      userId: data.performedByUserId || null,
+      action: "DOCUMENT_UPLOAD",
+      entity: "Document",
+      entityId: document.id,
+      oldValue: null,
+      newValue: JSON.stringify({ title: document.title, category: document.category, fileUrl: document.fileUrl })
+    });
+
+    return document;
+  });
+}
+
+/**
+ * Deletes a document and logs the audit event.
+ */
+export async function deleteDocumentAction(id: string, performedByUserId?: string | null) {
+  return runWithConnectionCheck(async () => {
+    const doc = await prisma.document.findUnique({ where: { id } });
+    if (!doc) throw new Error("Documento não encontrado");
+
+    await prisma.document.delete({
+      where: { id }
+    });
+
+    await logAudit({
+      companyId: doc.companyId,
+      userId: performedByUserId || null,
+      action: "DOCUMENT_DELETE",
+      entity: "Document",
+      entityId: doc.id,
+      oldValue: JSON.stringify({ title: doc.title, fileUrl: doc.fileUrl }),
+      newValue: null
+    });
+
+    return { id };
+  });
+}
