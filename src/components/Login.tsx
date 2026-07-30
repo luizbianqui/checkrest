@@ -24,6 +24,19 @@ const DEMO_USERS = [
     avatarUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuBP0wy0mJQlq45ZKUlgz_QNDVftgVzwsr_FR28EwdyCwZqV3VpnEXhRq3BsAhHj4Y6mDx986mvQxkWr2-zK-v9hF8oO-Pmh_kQ2f_vicLRKOYKyTC0yC5kfVzS-WzFabmIZMcJxc2cWUioFVmKmzFcbH0ys_mv0Ezuq-4E8i8q-jsucR6Ad2gV7Z70qKshIQVq6rFoFrVyZhULy96OE0NCxllIXcjVLDubdMaMqGtCYwKneQIw_9p3wjfW_pSrgP2bn6scT834CsCc"
   },
   {
+    role: "RESELLER_ADMIN" as const,
+    label: "Empresa Administradora",
+    email: "master@reseller.com.br",
+    password: "master123",
+    icon: Key,
+    color: "from-purple-600 to-pink-600",
+    desc: "Revende licenças para empresas clientes",
+    name: "Carlos Eduardo (Diretor Reseller)",
+    companyId: "comp-reseller-1",
+    unitId: null,
+    avatarUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuBP0wy0mJQlq45ZKUlgz_QNDVftgVzwsr_FR28EwdyCwZqV3VpnEXhRq3BsAhHj4Y6mDx986mvQxkWr2-zK-v9hF8oO-Pmh_kQ2f_vicLRKOYKyTC0yC5kfVzS-WzFabmIZMcJxc2cWUioFVmKmzFcbH0ys_mv0Ezuq-4E8i8q-jsucR6Ad2gV7Z70qKshIQVq6rFoFrVyZhULy96OE0NCxllIXcjVLDubdMaMqGtCYwKneQIw_9p3wjfW_pSrgP2bn6scT834CsCc"
+  },
+  {
     role: "COMPANY_ADMIN" as const,
     label: "Admin Empresa",
     email: "admin@restaurante.com",
@@ -68,6 +81,11 @@ export default function Login({ onLogin }: LoginProps) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [clientMode, setClientMode] = useState(true);
+
+  const visibleDemoUsers = clientMode
+    ? DEMO_USERS.filter((u) => u.role === "UNIT_MANAGER" || u.role === "OPERATOR")
+    : DEMO_USERS;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -126,6 +144,16 @@ export default function Login({ onLogin }: LoginProps) {
     setEmail(demo.email);
     setPassword(demo.password);
     setError("");
+    onLogin({
+      id: "usr-" + demo.role.toLowerCase(),
+      name: demo.name,
+      email: demo.email,
+      role: demo.role,
+      companyId: demo.companyId,
+      unitId: demo.unitId,
+      status: "active",
+      avatarUrl: demo.avatarUrl
+    });
   };
 
   return (
@@ -278,9 +306,21 @@ export default function Login({ onLogin }: LoginProps) {
 
           {/* Quick-fill Demo Profiles Section */}
           <div className="border-t border-white/5 pt-4 mt-4">
-            <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Acesso Rápido para Avaliação</h4>
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                {clientMode ? "Acesso Rápido para Avaliação do Cliente" : "Acesso Rápido (Todos os Perfis)"}
+              </h4>
+              <button
+                type="button"
+                onClick={() => setClientMode(!clientMode)}
+                className="text-[10px] font-medium text-slate-500 hover:text-emerald-400 transition-colors underline"
+              >
+                {clientMode ? "Ver todos os perfis" : "Visão do Cliente (Gerente/Operador)"}
+              </button>
+            </div>
             <div className="grid grid-cols-2 gap-3">
-              {DEMO_USERS.map((demo) => {
+              {visibleDemoUsers.map((demo) => {
                 const DemoIcon = demo.icon;
                 return (
                   <button

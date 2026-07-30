@@ -40,6 +40,7 @@ import Dashboard from "@/components/Dashboard";
 import AIConsultative from "@/components/AIConsultative";
 import ChecklistEditor from "@/components/ChecklistEditor";
 import SaaSAdminViews from "@/components/SaaSAdminViews";
+import ResellerDashboard from "@/components/ResellerDashboard";
 import OperationalOccurrences from "@/components/OperationalOccurrences";
 import ActionPlans from "@/components/ActionPlans";
 import DocumentsManager from "@/components/DocumentsManager";
@@ -167,7 +168,7 @@ export default function Home() {
   const [newCompanyPlan, setNewCompanyPlan] = useState<"Basic" | "Pro" | "Enterprise">("Pro");
 
   // Navigation State
-  const [activeTab, setActiveTab] = useState<"dashboard" | "checklists" | "editor" | "ai" | "settings" | "companies" | "collaborators" | "occurrences" | "nonconformities" | "actionplans" | "reports" | "dashboard_saas" | "licenses" | "company_admins" | "modules" | "commercial_status" | "global_settings" | "auditlogs" | "documents" | "cadastros">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "checklists" | "editor" | "ai" | "settings" | "companies" | "collaborators" | "occurrences" | "nonconformities" | "actionplans" | "reports" | "dashboard_saas" | "licenses" | "company_admins" | "modules" | "commercial_status" | "global_settings" | "auditlogs" | "documents" | "cadastros" | "reseller_dashboard">("dashboard");
 
   // Gestão de Cadastro States (Unidades, Setores, Colaboradores)
   const [cadastroSubTab, setCadastroSubTab] = useState<"units" | "sectors" | "users">("units");
@@ -205,6 +206,12 @@ export default function Home() {
   const [mobileOccUnitId, setMobileOccUnitId] = useState("un-1");
   const [isMobileOccurrenceOpen, setIsMobileOccurrenceOpen] = useState(false);
   const [operatorIdentifierInput, setOperatorIdentifierInput] = useState("");
+
+  // Manager Customization Modal State for Client Testing
+  const [isManagerCustomizationOpen, setIsManagerCustomizationOpen] = useState(false);
+  const [managerCustomName, setManagerCustomName] = useState("");
+  const [managerCustomUnitName, setManagerCustomUnitName] = useState("");
+  const [cleanDatabaseOnSave, setCleanDatabaseOnSave] = useState(true);
 
   // Non Conformities State
   const [nonConformities, setNonConformities] = useState<NonConformity[]>([]);
@@ -402,32 +409,6 @@ export default function Home() {
         });
       }
     });
-
-    // 6. Stubs elegantes para demonstrar módulos futuros da V1 (Estoque Baixo e Treinamento Vencendo)
-    // Apenas visíveis para gerentes/admins
-    if (currentUser.role !== "OPERATOR") {
-      list.push({
-        id: "inventory-stub-1",
-        title: "Estoque Baixo",
-        description: "Molho de tomate com estoque abaixo do mínimo de 5 unidades. Atual: 2 unidades.",
-        type: "warning",
-        category: "inventory",
-        createdAt: new Date(Date.now() - 3600 * 1000 * 3).toISOString(), // 3 hours ago
-        critical: false,
-        linkToTab: "dashboard"
-      });
-
-      list.push({
-        id: "training-stub-1",
-        title: "Certificação Expirando",
-        description: "A certificação de 'Manipulação de Alimentos' para o colaborador Ricardo Costa vence em 5 dias.",
-        type: "warning",
-        category: "training",
-        createdAt: new Date(Date.now() - 3600 * 1000 * 8).toISOString(), // 8 hours ago
-        critical: false,
-        linkToTab: "dashboard"
-      });
-    }
 
     // Sort by date descending
     return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -630,12 +611,17 @@ export default function Home() {
         setActiveTab("editor");
       }
     } else if (currentUser.role === "UNIT_MANAGER") {
-      if (adminTabs.includes(activeTab)) {
+      if (adminTabs.includes(activeTab) || activeTab === "reseller_dashboard") {
         setActiveTab("dashboard");
       }
     } else if (currentUser.role === "COMPANY_ADMIN") {
-      if (adminTabs.includes(activeTab)) {
+      if (adminTabs.includes(activeTab) || activeTab === "reseller_dashboard") {
         setActiveTab("dashboard");
+      }
+    } else if (currentUser.role === "RESELLER_ADMIN") {
+      const allowedReseller = ["reseller_dashboard", "cadastros", "settings"];
+      if (!allowedReseller.includes(activeTab)) {
+        setActiveTab("reseller_dashboard");
       }
     } else if (currentUser.role === "SAAS_ADMIN") {
       const allowedSaas = [...adminTabs, "settings"];
@@ -644,8 +630,6 @@ export default function Home() {
       }
     }
   }, [activeTab, currentUser]);
-
-
 
   const handleLogin = (user: UserType) => {
     setCurrentUser(user);
@@ -661,6 +645,8 @@ export default function Home() {
       setSelectedChecklistId(null);
     } else if (user.role === "SAAS_ADMIN") {
       setActiveTab("companies");
+    } else if (user.role === "RESELLER_ADMIN") {
+      setActiveTab("reseller_dashboard");
     } else {
       setActiveTab("dashboard");
     }
@@ -894,6 +880,139 @@ export default function Home() {
 
     loadDashboardStats();
   }, [dbConnected, isSessionLoaded, currentUser, selectedUnitFilter, selectedPeriodFilter, units]);
+
+  // Dynamic Dashboard Stats connected in real-time to checklists, runs, non-conformities & action plans
+  const computedDashboardStats = useMemo(() => {
+    if (dbConnected && dashboardStats.scheduled > 0) {
+      return dashboardStats;
+    }
+
+    const activeUnit = units.find(u => u.name === selectedUnitFilter);
+    const unitIdFilter = selectedUnitFilter === "Todas as Unidades" ? null : activeUnit?.id || null;
+
+    const matchesScope = (itemUnitId: string | null | undefined) => {
+      if (currentUser?.role === "SAAS_ADMIN" || currentUser?.role === "COMPANY_ADMIN") {
+        if (!unitIdFilter) return true;
+        return itemUnitId === unitIdFilter;
+      }
+      if (currentUser?.role === "UNIT_MANAGER") {
+        return !currentUser.unitId || itemUnitId === currentUser.unitId;
+      }
+      return true;
+    };
+
+    const scopedChecklists = checklists.filter(c => c.status === "active");
+    const scopedRuns = checklistRuns.filter(r => matchesScope(r.unitId));
+    const scopedNCs = nonConformities.filter(nc => (nc.status === "open" || nc.status === "in_progress") && matchesScope(nc.unitId));
+    const scopedAPs = actionPlans.filter(ap => (ap.status === "pending" || ap.status === "in_progress") && matchesScope(ap.unitId));
+
+    const completedRuns = scopedRuns.filter(r => r.status === "completed");
+    const inProgressRuns = scopedRuns.filter(r => r.status === "in_progress");
+    const lateRuns = scopedRuns.filter(r => r.status === "late");
+
+    const totalCompleted = completedRuns.length;
+    const totalScheduled = scopedChecklists.length || 0;
+    const scoreSum = completedRuns.reduce((acc, r) => acc + (r.score || 0), 0);
+    const avgScore = totalCompleted > 0 ? Math.round(scoreSum / totalCompleted) : (totalScheduled > 0 ? 100 : 0);
+
+    const daysMap: Record<string, number[]> = { Seg: [], Ter: [], Qua: [], Qui: [], Sex: [], Sáb: [], Dom: [] };
+    completedRuns.forEach(r => {
+      if (r.finishedAt) {
+        const d = new Date(r.finishedAt);
+        const dayName = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"][d.getDay()];
+        if (daysMap[dayName]) {
+          daysMap[dayName].push(r.score || 0);
+        }
+      }
+    });
+
+    const weeklyScores = [
+      { day: "Seg", val: daysMap["Seg"].length > 0 ? Math.round(daysMap["Seg"].reduce((a,b)=>a+b,0)/daysMap["Seg"].length) : avgScore || 92 },
+      { day: "Ter", val: daysMap["Ter"].length > 0 ? Math.round(daysMap["Ter"].reduce((a,b)=>a+b,0)/daysMap["Ter"].length) : avgScore || 88 },
+      { day: "Qua", val: daysMap["Qua"].length > 0 ? Math.round(daysMap["Qua"].reduce((a,b)=>a+b,0)/daysMap["Qua"].length) : avgScore || 95 },
+      { day: "Qui", val: daysMap["Qui"].length > 0 ? Math.round(daysMap["Qui"].reduce((a,b)=>a+b,0)/daysMap["Qui"].length) : avgScore || 92 },
+      { day: "Sex", val: daysMap["Sex"].length > 0 ? Math.round(daysMap["Sex"].reduce((a,b)=>a+b,0)/daysMap["Sex"].length) : avgScore || 94 },
+      { day: "Sáb", val: daysMap["Sáb"].length > 0 ? Math.round(daysMap["Sáb"].reduce((a,b)=>a+b,0)/daysMap["Sáb"].length) : avgScore || 90 },
+      { day: "Dom", val: daysMap["Dom"].length > 0 ? Math.round(daysMap["Dom"].reduce((a,b)=>a+b,0)/daysMap["Dom"].length) : avgScore || 96 }
+    ];
+
+    const operatorMap: Record<string, { count: number; totalScore: number }> = {};
+    completedRuns.forEach(r => {
+      const name = r.assignedTo || currentUser?.name || "Operador";
+      if (!operatorMap[name]) operatorMap[name] = { count: 0, totalScore: 0 };
+      operatorMap[name].count += 1;
+      operatorMap[name].totalScore += (r.score || 0);
+    });
+
+    const operatorRanking = Object.entries(operatorMap).map(([name, data], idx) => ({
+      name,
+      initials: name.slice(0, 2).toUpperCase(),
+      score: Math.round(data.totalScore / data.count),
+      color: idx === 0 ? "bg-emerald-600" : idx === 1 ? "bg-blue-600" : "bg-purple-600"
+    }));
+
+    if (operatorRanking.length === 0 && currentUser) {
+      operatorRanking.push({
+        name: currentUser.name,
+        initials: currentUser.name.slice(0, 2).toUpperCase(),
+        score: avgScore || 100,
+        color: "bg-emerald-600"
+      });
+    }
+
+    return {
+      scheduled: totalScheduled,
+      active: inProgressRuns.length,
+      completed: totalCompleted,
+      delayed: lateRuns.length,
+      openNonConforms: scopedNCs.length,
+      pendingActionPlans: scopedAPs.length,
+      weeklyScores,
+      operatorRanking
+    };
+  }, [dbConnected, dashboardStats, checklists, checklistRuns, nonConformities, actionPlans, selectedUnitFilter, units, currentUser]);
+
+  const handleSaveManagerCustomization = () => {
+    if (!managerCustomName.trim()) {
+      alert("Por favor, informe o nome do gerente.");
+      return;
+    }
+
+    const newName = managerCustomName.trim();
+    const newUnit = managerCustomUnitName.trim() || "Unidade Jardins - Loja Centro";
+
+    if (currentUser) {
+      const updatedUser = {
+        ...currentUser,
+        name: newName
+      };
+      setCurrentUser(updatedUser);
+      localStorage.setItem("checkrest_user", JSON.stringify(updatedUser));
+    }
+
+    if (units.length > 0) {
+      const targetId = currentUser?.unitId || units[0].id;
+      setUnits(prev => prev.map(u => u.id === targetId ? { ...u, name: newUnit, managerName: newName } : u));
+      setSelectedUnitFilter(newUnit);
+    }
+
+    if (cleanDatabaseOnSave) {
+      setChecklistRuns([]);
+      setOccurrences([]);
+      setNonConformities([]);
+      setActionPlans([]);
+      setReadNotificationIds([]);
+
+      localStorage.removeItem("checkrest_occurrences");
+      localStorage.removeItem("checkrest_nonconformities");
+      localStorage.removeItem("checkrest_actionplans");
+      localStorage.removeItem("checkrest_checklist_runs");
+      localStorage.removeItem("checkrest_read_notifications");
+    }
+
+    setIsManagerCustomizationOpen(false);
+    alert(`Perfil personalizado com sucesso!\n• Gerente: ${newName}\n• Unidade: ${newUnit}${cleanDatabaseOnSave ? "\n• Banco de Dados zerado para o teste do cliente." : ""}`);
+  };
 
   // Checklist Filter State
   const [checklistStatusFilter, setChecklistStatusFilter] = useState<"active" | "draft" | "archived">("active");
@@ -2438,11 +2557,34 @@ export default function Home() {
 
           <div className="h-8 w-px bg-slate-200"></div>
 
+          {(currentUser?.role === "UNIT_MANAGER" || currentUser?.role === "COMPANY_ADMIN") && (
+            <button
+              onClick={() => {
+                handleLogin({
+                  id: "usr-operator",
+                  name: "João Roberto (Cozinheiro)",
+                  email: "operador@restaurante.com",
+                  role: "OPERATOR",
+                  companyId: currentUser.companyId || "comp-1",
+                  unitId: currentUser.unitId || "un-2",
+                  status: "active",
+                  avatarUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuAO7Hl5S5Kqo3bFEfk8orp0XNzAxDQRiej3pR2O5ief-MkbtcYy49MPk0Otgq5rNveu5sZFc7AO6F195R1RO6NhKLz7AhKqZXAtlmC8_nlHSZ4LejavBzlS5T6Kl5eeeZjOdVfP9kBWpjaIekdkZrrLNE7Umz7BfyKRmsRtUDCDpgZH9ser9xm94aVyQxSf_jrhcDI8KjJPsrTU7k0zdIh-QS77QtQu4dU3CcDwLJfAyvKVOz61CvGGWDPrnPzAcTNTUyH3bPDtGU4"
+                });
+              }}
+              className="hidden md:flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm"
+              title="Alternar para a visão do Operador durante a demonstração"
+            >
+              <Users className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Simular Operador ➔</span>
+            </button>
+          )}
+
           <div className="flex items-center gap-3">
             <div className="text-right hidden sm:block">
               <p className="text-sm font-semibold text-slate-900">{currentUser?.name}</p>
-              <p className="text-xs text-slate-500 font-semibold uppercase tracking-wider text-emerald-600">
+              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">
                 {currentUser?.role === "SAAS_ADMIN" && "SaaS Admin"}
+                {currentUser?.role === "RESELLER_ADMIN" && "Revendedor Master"}
                 {currentUser?.role === "COMPANY_ADMIN" && "Admin Empresa"}
                 {currentUser?.role === "UNIT_MANAGER" && "Gerente de Unidade"}
               </p>
@@ -2715,10 +2857,11 @@ export default function Home() {
               setSelectedUnitFilter={setSelectedUnitFilter}
               selectedPeriodFilter={selectedPeriodFilter}
               setSelectedPeriodFilter={setSelectedPeriodFilter}
-              dashboardStats={dashboardStats}
+              dashboardStats={computedDashboardStats}
               units={units}
               setActiveTab={setActiveTab}
               setChatInput={setChatInput}
+              onOpenManagerCustomization={() => setIsManagerCustomizationOpen(true)}
             />
           )}
           {/* ========================================================================= */}
@@ -3641,6 +3784,17 @@ export default function Home() {
           )}
 
           {/* ========================================================================= */}
+          {/* RESELLER ADMIN VIEWS                                                      */}
+          {/* ========================================================================= */}
+          {activeTab === "reseller_dashboard" && (
+            <ResellerDashboard
+              currentUser={currentUser}
+              companies={companies}
+              setCompanies={setCompanies}
+            />
+          )}
+
+          {/* ========================================================================= */}
           {/* OPERATIONAL OCCURRENCES & NON-CONFORMITIES                                */}
           {/* ========================================================================= */}
           {["occurrences", "nonconformities"].includes(activeTab) && (
@@ -3728,6 +3882,86 @@ export default function Home() {
               currentUser={currentUser}
             />
           )}
+
+      {/* Occurrence Duplication Modal */}
+      {isManagerCustomizationOpen && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-scaleUp">
+            <div className="px-6 py-5 bg-gradient-to-r from-indigo-900 to-[#131b2e] text-white flex justify-between items-center">
+              <div className="flex items-center gap-2">
+                <span className="p-2 bg-indigo-500/20 rounded-xl text-indigo-300">⚙️</span>
+                <div>
+                  <h3 className="font-extrabold text-sm tracking-tight">Personalizar Teste do Cliente (Perfil Gerente)</h3>
+                  <p className="text-[11px] text-slate-300 font-normal">Configure os dados reais do seu cliente para a demonstração</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsManagerCustomizationOpen(false)}
+                className="text-slate-400 hover:text-white transition-colors p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5 text-xs">
+              <div className="space-y-1.5">
+                <label className="block font-bold text-slate-700">Nome do Gerente / Cliente</label>
+                <input
+                  type="text"
+                  value={managerCustomName}
+                  onChange={(e) => setManagerCustomName(e.target.value)}
+                  placeholder="Ex: Carlos Oliveira (Gerente Geral)"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="block font-bold text-slate-700">Nome da Unidade / Restaurante</label>
+                <input
+                  type="text"
+                  value={managerCustomUnitName}
+                  onChange={(e) => setManagerCustomUnitName(e.target.value)}
+                  placeholder="Ex: Bob's Unidade Centro - Restaurante 01"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-600"
+                />
+              </div>
+
+              <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-100 space-y-2">
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={cleanDatabaseOnSave}
+                    onChange={(e) => setCleanDatabaseOnSave(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                  />
+                  <div>
+                    <span className="font-extrabold text-indigo-950 block text-xs">🧹 Iniciar com Banco Zerado (Limpar dados fictícios anteriores)</span>
+                    <span className="text-[11px] text-slate-600 block mt-0.5">
+                      Reseta execuções antigas, ocorrências e notificações para 0 pendências, garantindo um teste limpo do zero.
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              <div className="pt-2 flex gap-3">
+                <button
+                  onClick={() => setIsManagerCustomizationOpen(false)}
+                  className="flex-1 py-3 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 transition-colors uppercase text-[11px]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleSaveManagerCustomization}
+                  className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-xl font-bold text-[11px] uppercase tracking-wider shadow-lg shadow-indigo-600/20 transition-all flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  Salvar e Iniciar Teste
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Occurrence Duplication Modal */}
       {isDuplicateModalOpen && occurrenceToDuplicate && (

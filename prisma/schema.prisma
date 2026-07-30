@@ -14,10 +14,19 @@ model Company {
   cnpj               String              @unique
   plan               String              @default("Pro") // "Basic", "Pro", "Enterprise"
   status             String              @default("active") // "active", "inactive"
+  parentCompanyId    String?             @map("parent_company_id")
+  maxLicenses        Int                 @default(5) @map("max_licenses")
+  adminEmail         String?             @map("admin_email")
+  adminName          String?             @map("admin_name")
+  isReseller         Boolean             @default(false) @map("is_reseller")
   createdAt          DateTime            @default(now()) @map("created_at")
   updatedAt          DateTime            @updatedAt @map("updated_at")
+
+  parentCompany      Company?            @relation("CompanyToSubCompanies", fields: [parentCompanyId], references: [id], onDelete: SetNull)
+  subCompanies       Company[]           @relation("CompanyToSubCompanies")
   units              Unit[]
   users              User[]
+  accountInvites     AccountInvite[]
   checklistTemplates ChecklistTemplate[]
   checklistSchedules ChecklistSchedule[]
   checklistRuns      ChecklistRun[]
@@ -59,24 +68,40 @@ model Unit {
 }
 
 model User {
-  id            String         @id @default(uuid())
-  companyId     String?        @map("company_id")
-  unitId        String?        @map("unit_id")
-  name          String
-  email         String         @unique
-  passwordHash  String?        @map("password_hash")
-  role          String         @default("OPERATOR") // "SAAS_ADMIN", "COMPANY_ADMIN", "UNIT_MANAGER", "OPERATOR"
-  status        String         @default("active") // "active", "inactive"
-  avatarUrl     String?        @map("avatar_url")
-  createdAt     DateTime       @default(now()) @map("created_at")
-  updatedAt     DateTime       @updatedAt @map("updated_at")
-  company       Company?       @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  unit          Unit?          @relation(fields: [unitId], references: [id], onDelete: SetNull)
-  actionPlans   ActionPlan[]   @relation("ResponsibleUser")
-  trainings     UserTraining[]
-  auditLogs     AuditLog[]
+  id                 String         @id @default(uuid())
+  companyId          String?        @map("company_id")
+  unitId             String?        @map("unit_id")
+  name               String
+  email              String         @unique
+  passwordHash       String?        @map("password_hash")
+  role               String         @default("OPERATOR") // "SAAS_ADMIN", "RESELLER_ADMIN", "COMPANY_ADMIN", "UNIT_MANAGER", "OPERATOR"
+  status             String         @default("active") // "active", "inactive"
+  mustChangePassword Boolean        @default(false) @map("must_change_password")
+  avatarUrl          String?        @map("avatar_url")
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+  company            Company?       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  unit               Unit?          @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  actionPlans        ActionPlan[]   @relation("ResponsibleUser")
+  trainings          UserTraining[]
+  auditLogs          AuditLog[]
 
   @@map("users")
+}
+
+model AccountInvite {
+  id        String   @id @default(uuid())
+  email     String
+  role      String   @default("COMPANY_ADMIN") // "RESELLER_ADMIN", "COMPANY_ADMIN", "UNIT_MANAGER", "OPERATOR"
+  companyId String?  @map("company_id")
+  unitId    String?  @map("unit_id")
+  token     String   @unique
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at")
+  company   Company? @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("account_invites")
 }
 
 model ChecklistTemplate {

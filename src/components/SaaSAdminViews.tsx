@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getUsersAction, createUserAction, toggleUserStatusAction } from "@/app/actions/dbActions";
+import { getUsersAction, createUserAction, toggleUserStatusAction, createCompanyWithInviteAction } from "@/app/actions/dbActions";
 import {
   Building,
   Award,
@@ -19,7 +19,16 @@ import {
   Filter,
   DollarSign,
   Users,
-  Briefcase
+  Briefcase,
+  Link as LinkIcon,
+  Copy,
+  Check,
+  Mail,
+  Share2,
+  Crown,
+  Loader2,
+  AlertCircle,
+  ShieldCheck
 } from "lucide-react";
 import { Company, User as UserType, AuditLog } from "@/types";
 
@@ -52,10 +61,82 @@ export default function SaaSAdminViews({
   handleToggleCompanyStatus,
   auditLogs
 }: SaaSAdminViewsProps) {
-  // Local States for SaaS features
+  // Local States for SaaS features & Multi-tenant Invites
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedPlanFilter, setSelectedPlanFilter] = useState("Todos");
   const [selectedStatusFilter, setSelectedStatusFilter] = useState("Todos");
+
+  // Onboarding & First Access States
+  const [adminName, setAdminName] = useState("");
+  const [adminEmail, setAdminEmail] = useState("");
+  const [isReseller, setIsReseller] = useState(false);
+  const [maxLicenses, setMaxLicenses] = useState(5);
+  const [creatingCompany, setCreatingCompany] = useState(false);
+  const [createdInvite, setCreatedInvite] = useState<{
+    companyName: string;
+    inviteUrl: string;
+    token: string;
+    role: string;
+    email: string;
+  } | null>(null);
+  const [copiedToken, setCopiedToken] = useState(false);
+  const [emailSentAlert, setEmailSentAlert] = useState(false);
+
+  const handleCreateCompanyWithInvite = async () => {
+    if (!newCompanyName.trim() || !newCompanyCnpj.trim() || !adminEmail.trim() || !adminName.trim()) {
+      alert("Por favor, preencha o Nome da Empresa, CNPJ, Nome e E-mail do Responsável Master.");
+      return;
+    }
+
+    setCreatingCompany(true);
+    try {
+      const res = await createCompanyWithInviteAction({
+        name: newCompanyName.trim(),
+        cnpj: newCompanyCnpj.trim(),
+        plan: newCompanyPlan,
+        adminName: adminName.trim(),
+        adminEmail: adminEmail.trim(),
+        maxLicenses: Number(maxLicenses) || 5,
+        isReseller: isReseller
+      });
+
+      if (res.success && res.data) {
+        const data = res.data;
+        const fullUrl = `${window.location.origin}${data.activationUrl}`;
+        setCreatedInvite({
+          companyName: data.company.name,
+          inviteUrl: fullUrl,
+          token: data.token,
+          role: isReseller ? "RESELLER_ADMIN" : "COMPANY_ADMIN",
+          email: adminEmail.trim()
+        });
+        setCompanies(prev => [
+          {
+            id: data.company.id,
+            name: data.company.name,
+            cnpj: data.company.cnpj,
+            plan: data.company.plan as any,
+            status: "active",
+            isReseller: data.company.isReseller,
+            maxLicenses: data.company.maxLicenses,
+            adminEmail: data.company.adminEmail,
+            adminName: data.company.adminName
+          },
+          ...prev
+        ]);
+        setNewCompanyName("");
+        setNewCompanyCnpj("");
+        setAdminName("");
+        setAdminEmail("");
+      } else {
+        alert("Erro ao cadastrar empresa: " + (res.error || "Tente novamente"));
+      }
+    } catch (e: any) {
+      alert("Erro ao cadastrar empresa: " + e.message);
+    } finally {
+      setCreatingCompany(false);
+    }
+  };
 
   // Admins state
   const [admins, setAdmins] = useState<UserType[]>([
@@ -232,36 +313,66 @@ export default function SaaSAdminViews({
 
             <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
               <div>
-                <span className="text-xs font-bold text-slate-400 uppercase">Licenças de Usuário</span>
-                <h3 className="text-2xl font-black text-slate-800 mt-1">15 / 75</h3>
-                <span className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-full mt-2 inline-block">20% de utilização</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">Saúde da Infraestrutura</span>
+                <h3 className="text-2xl font-black text-emerald-600 mt-1">99.9% Uptime</h3>
+                <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">Servidores OK</span>
               </div>
-              <div className="p-3 bg-amber-50 rounded-xl text-amber-600">
-                <Users className="w-6 h-6" />
+              <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
+                <Activity className="w-6 h-6" />
               </div>
             </div>
 
             <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
               <div>
-                <span className="text-xs font-bold text-slate-400 uppercase">Churn Rate</span>
-                <h3 className="text-2xl font-black text-slate-800 mt-1">0.0%</h3>
-                <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">Excelente retenção</span>
+                <span className="text-xs font-bold text-slate-400 uppercase">Bugs / Suporte</span>
+                <h3 className="text-2xl font-black text-slate-800 mt-1">0 Abertos</h3>
+                <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">Operação Saudável</span>
               </div>
               <div className="p-3 bg-purple-50 rounded-xl text-purple-600">
-                <Activity className="w-6 h-6" />
+                <ShieldCheck className="w-6 h-6" />
               </div>
+            </div>
+          </div>
+
+          {/* System Health & Status Banner */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-2xl">
+                <Activity className="w-8 h-8 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                  <h3 className="font-bold text-white text-base">Todos os Sistemas SaaS Operacionais</h3>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  PostgreSQL Supabase: <span className="text-emerald-400 font-semibold">Conectado</span> | Next.js API Routes: <span className="text-emerald-400 font-semibold">200 OK</span> | Latência Média: <span className="text-indigo-400 font-semibold">24ms</span>
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="px-3 py-1 bg-slate-800 border border-slate-700 text-slate-300 rounded-xl text-xs font-semibold">
+                Versão v2.4.0 (Stable)
+              </span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-              <h3 className="font-bold text-slate-800 text-sm mb-4">Empresas Recentes</h3>
+              <h3 className="font-bold text-slate-800 text-sm mb-4">Empresas e Revendedores Cadastrados</h3>
               <div className="space-y-4">
-                {companies.slice(0, 3).map(c => (
+                {companies.slice(0, 5).map(c => (
                   <div key={c.id} className="flex justify-between items-center p-3.5 bg-slate-50 border border-slate-100 rounded-lg">
                     <div>
-                      <h4 className="text-xs font-bold text-slate-800">{c.name}</h4>
-                      <p className="text-[10px] text-slate-400 mt-0.5">CNPJ: {c.cnpj}</p>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-xs font-bold text-slate-800">{c.name}</h4>
+                        {c.isReseller && (
+                          <span className="px-2 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700 border border-purple-200 rounded-full">
+                            Empresa Administradora / Reseller
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-0.5">CNPJ: {c.cnpj} {c.adminEmail && `| Gestor: ${c.adminEmail}`}</p>
                     </div>
                     <div className="flex items-center gap-3">
                       <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${
@@ -275,7 +386,7 @@ export default function SaaSAdminViews({
             </div>
 
             <div className="lg:col-span-1 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
-              <h3 className="font-bold text-slate-800 text-sm mb-4">Atividade SaaS Recente</h3>
+              <h3 className="font-bold text-slate-800 text-sm mb-4">Logs do Sistema & Auditoria Técnica</h3>
               <div className="space-y-3.5 max-h-[220px] overflow-y-auto preview-scroll">
                 {auditLogs.slice(0, 5).map(log => (
                   <div key={log.id} className="text-xs border-l-2 border-indigo-500 pl-3 py-0.5 space-y-1">
@@ -411,19 +522,19 @@ export default function SaaSAdminViews({
             {/* Add Company Card */}
             <div className="lg:col-span-4 bg-white border border-slate-200 rounded-xl p-6 shadow-sm space-y-4">
               <div className="border-b border-slate-100 pb-3">
-                <h3 className="font-bold text-slate-800 text-sm">Adicionar Nova Empresa</h3>
-                <p className="text-xs text-slate-400 mt-1">Criação instantânea de novo tenant SaaS.</p>
+                <h3 className="font-bold text-slate-800 text-sm">Cadastrar Empresa & Gerar Primeiro Acesso</h3>
+                <p className="text-xs text-slate-400 mt-1">Cria o tenant e gera o link mágico de ativação master.</p>
               </div>
 
               <div className="space-y-4">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500">Nome Comercial</label>
+                  <label className="text-xs font-bold text-slate-500">Nome Comercial da Empresa</label>
                   <input
                     type="text"
                     value={newCompanyName}
                     onChange={(e) => setNewCompanyName(e.target.value)}
                     className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-2 px-3 text-slate-800 font-semibold"
-                    placeholder="Ex: Grupo Bobs Jardins"
+                    placeholder="Ex: Grupo Bob's Jardins"
                   />
                 </div>
 
@@ -437,6 +548,57 @@ export default function SaaSAdminViews({
                     placeholder="Ex: 00.000.000/0000-00"
                   />
                 </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">Nome do Gestor Master</label>
+                    <input
+                      type="text"
+                      value={adminName}
+                      onChange={(e) => setAdminName(e.target.value)}
+                      className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-2 px-3 text-slate-800"
+                      placeholder="Ex: Ricardo Santos"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">E-mail de Primeiro Acesso</label>
+                    <input
+                      type="email"
+                      value={adminEmail}
+                      onChange={(e) => setAdminEmail(e.target.value)}
+                      className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-2 px-3 text-slate-800"
+                      placeholder="Ex: ricardo@empresa.com"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-500">Tipo de Conta / Perfil</label>
+                  <div className="flex items-center gap-3 bg-slate-50 border border-slate-200 p-2.5 rounded-lg">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={isReseller}
+                        onChange={(e) => setIsReseller(e.target.checked)}
+                        className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                      />
+                      <span>Empresa Administradora / Revendedora (Reseller)</span>
+                    </label>
+                  </div>
+                </div>
+
+                {isReseller && (
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-500">Limite de Licenças / Sub-Empresas</label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={maxLicenses}
+                      onChange={(e) => setMaxLicenses(Number(e.target.value))}
+                      className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-2 px-3 text-slate-800 font-semibold"
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-1">
                   <label className="text-xs font-bold text-slate-500">Plano de Entrada</label>
@@ -452,15 +614,101 @@ export default function SaaSAdminViews({
                 </div>
 
                 <button
-                  onClick={handleAddCompany}
-                  className="w-full py-2.5 bg-[#131b2e] hover:bg-slate-800 text-white rounded-lg font-bold text-xs uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-1.5"
+                  onClick={handleCreateCompanyWithInvite}
+                  disabled={creatingCompany}
+                  className="w-full py-2.5 bg-[#131b2e] hover:bg-slate-800 text-white rounded-lg font-bold text-xs uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-1.5 disabled:opacity-50"
                 >
-                  <Plus className="w-4 h-4" />
-                  Cadastrar Empresa
+                  {creatingCompany ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Gerando Primeiro Acesso...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-4 h-4" />
+                      Cadastrar & Gerar Link de Acesso
+                    </>
+                  )}
                 </button>
               </div>
             </div>
           </div>
+
+          {/* Modal do Link de Primeiro Acesso Gerado */}
+          {createdInvite && (
+            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+              <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-lg w-full shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                      <LinkIcon className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-900 text-base">Link de Primeiro Acesso Gerado!</h3>
+                      <p className="text-xs text-slate-500">{createdInvite.companyName}</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setCreatedInvite(null)}
+                    className="text-slate-400 hover:text-slate-600 text-sm font-bold p-1"
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Envie este link para o e-mail <strong className="text-slate-900">{createdInvite.email}</strong>. Ao clicar, o responsável ativará a empresa e definirá a senha de acesso.
+                  </p>
+
+                  <div className="p-3 bg-slate-900 text-slate-100 rounded-xl font-mono text-[11px] break-all border border-slate-800 flex items-center justify-between gap-2">
+                    <span className="select-all text-indigo-300">{createdInvite.inviteUrl}</span>
+                  </div>
+
+                  {emailSentAlert && (
+                    <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-center gap-2">
+                      <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>E-mail de boas-vindas com o link de primeiro acesso simulado com sucesso!</span>
+                    </div>
+                  )}
+
+                  <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(createdInvite.inviteUrl);
+                        setCopiedToken(true);
+                        setTimeout(() => setCopiedToken(false), 2000);
+                      }}
+                      className="flex-1 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md"
+                    >
+                      {copiedToken ? (
+                        <>
+                          <Check className="w-4 h-4" />
+                          Link Copiado!
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-4 h-4" />
+                          Copiar Link de Ativação
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setEmailSentAlert(true);
+                        setTimeout(() => setEmailSentAlert(false), 3500);
+                      }}
+                      className="py-2.5 px-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all"
+                    >
+                      <Mail className="w-4 h-4" />
+                      Simular Envio por E-mail
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

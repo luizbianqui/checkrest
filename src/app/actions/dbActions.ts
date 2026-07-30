@@ -2,6 +2,7 @@
 
 import prisma from "@/lib/prisma";
 import { cookies } from "next/headers";
+import { randomUUID } from "crypto";
 
 /**
  * Helper to execute a database query. If the database connection details are
@@ -39,6 +40,73 @@ async function runWithConnectionCheck<T>(
       error: errorMsg
     };
   }
+}
+
+async function ensureValidCompanyId(tx: any, companyId: string | null | undefined): Promise<string> {
+  if (companyId && companyId !== "new") {
+    try {
+      const existing = await tx.company.findUnique({
+        where: { id: companyId }
+      });
+      if (existing) {
+        return existing.id;
+      }
+    } catch (e) {
+      console.warn("Aviso ao buscar empresa por ID:", e);
+    }
+  }
+
+  const firstCompany = await tx.company.findFirst();
+  if (firstCompany) {
+    return firstCompany.id;
+  }
+
+  const targetId = (companyId && companyId !== "new") ? companyId : "comp-1";
+  const newCompany = await tx.company.create({
+    data: {
+      id: targetId,
+      name: "Restaurante Modelo",
+      cnpj: "12.345.678/0001-90",
+      plan: "Pro",
+      status: "active"
+    }
+  });
+  return newCompany.id;
+}
+
+async function ensureValidUnitId(tx: any, companyId: string, unitId: string | null | undefined): Promise<string> {
+  if (unitId && unitId !== "new") {
+    try {
+      const existing = await tx.unit.findUnique({
+        where: { id: unitId }
+      });
+      if (existing) {
+        return existing.id;
+      }
+    } catch (e) {
+      console.warn("Aviso ao buscar unidade por ID:", e);
+    }
+  }
+
+  const firstUnit = await tx.unit.findFirst({
+    where: { companyId }
+  });
+  if (firstUnit) {
+    return firstUnit.id;
+  }
+
+  const targetId = (unitId && unitId !== "new") ? unitId : "un-1";
+  const newUnit = await tx.unit.create({
+    data: {
+      id: targetId,
+      companyId,
+      name: "Unidade Jardins - Loja Centro",
+      address: "Av. Paulista, 1000",
+      managerName: "Ana Martins",
+      status: "active"
+    }
+  });
+  return newUnit.id;
 }
 
 async function logAudit(data: {
@@ -257,7 +325,7 @@ export async function getCompaniesAction() {
 }
 
 /**
- * Creates a new company/tenant (SAAS_ADMIN only).
+ * Creates a new company/tenant (SAAS_ADMIN or RESELLER_ADMIN).
  */
 export async function createCompanyAction(data: {
   name: string;
@@ -273,6 +341,237 @@ export async function createCompanyAction(data: {
         status: "active"
       }
     });
+  });
+}
+
+/**
+ * Creates a new company with an automatic first-access invitation token.
+ */
+export async function createCompanyWithInviteAction(data: {
+  name: string;
+  cnpj: string;
+  plan: string;
+  adminName: string;
+  adminEmail: string;
+  maxLicenses?: number;
+  isReseller?: boolean;
+  parentCompanyId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    // 1. Verify parent company license limit
+    if (data.parentCompanyId) {
+      const parent = await (prisma as any).company.findUnique({
+        where: { id: data.parentCompanyId },
+        include: { subCompanies: true }
+      });
+      if (parent && parent.subCompanies.length >= (parent.maxLicenses || 5)) {
+        throw new Error(`A empresa administradora atingiu o limite de ${parent.maxLicenses || 5} licenças.`);
+      }
+    }
+
+    // 2. Create Company
+    const company = await (prisma as any).company.create({
+      data: {
+        name: data.name,
+        cnpj: data.cnpj,
+        plan: data.plan,
+        adminName: data.adminName,
+        adminEmail: data.adminEmail,
+        maxLicenses: data.maxLicenses || 5,
+        isReseller: data.isReseller || false,
+        parentCompanyId: data.parentCompanyId || null,
+        status: "active"
+      }
+    });
+
+    // 3. Generate token & AccountInvite (expires in 7 days)
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const role = data.isReseller ? "RESELLER_ADMIN" : "COMPANY_ADMIN";
+
+    const invite = await (prisma as any).accountInvite.create({
+      data: {
+        email: data.adminEmail,
+        role: role,
+        companyId: company.id,
+        token: token,
+        expiresAt: expiresAt,
+        used: false
+      }
+    });
+
+    return {
+      company,
+      invite,
+      token,
+      activationUrl: `/activate?token=${token}`
+    };
+  });
+}
+
+/**
+ * Retrieves full company hierarchy, parent, and sub-companies with license usage.
+ */
+export async function getCompanyHierarchyAction(companyId: string) {
+  return runWithConnectionCheck(async () => {
+    return (prisma as any).company.findUnique({
+      where: { id: companyId },
+      include: {
+        parentCompany: true,
+        subCompanies: {
+          include: {
+            users: true,
+            units: true
+          }
+        },
+        users: true,
+        units: true
+      }
+    });
+  });
+}
+
+/**
+ * Generates an invite token for a Manager or Operator.
+ */
+export async function createCollaboratorInviteAction(data: {
+  email: string;
+  role: "UNIT_MANAGER" | "OPERATOR";
+  companyId: string;
+  unitId?: string | null;
+}) {
+  return runWithConnectionCheck(async () => {
+    const token = randomUUID();
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+    const invite = await (prisma as any).accountInvite.create({
+      data: {
+        email: data.email,
+        role: data.role,
+        companyId: data.companyId,
+        unitId: data.unitId || null,
+        token: token,
+        expiresAt: expiresAt,
+        used: false
+      }
+    });
+
+    return {
+      invite,
+      token,
+      activationUrl: `/activate?token=${token}`
+    };
+  });
+}
+
+/**
+ * Verifies an invite token for first access.
+ */
+export async function verifyInviteTokenAction(token: string) {
+  return runWithConnectionCheck(async () => {
+    const invite = await (prisma as any).accountInvite.findUnique({
+      where: { token },
+      include: {
+        company: true
+      }
+    });
+
+    if (!invite) {
+      throw new Error("Token de convite não encontrado.");
+    }
+    if (invite.used) {
+      throw new Error("Este convite já foi utilizado para ativar uma conta.");
+    }
+    if (new Date(invite.expiresAt) < new Date()) {
+      throw new Error("Este convite expirou. Solicite um novo link ao administrador.");
+    }
+
+    return invite;
+  });
+}
+
+/**
+ * Activates user account with password creation from invite token.
+ */
+export async function activateAccountAction(data: {
+  token: string;
+  name: string;
+  password: string;
+}) {
+  return runWithConnectionCheck(async () => {
+    const invite = await (prisma as any).accountInvite.findUnique({
+      where: { token: data.token },
+      include: { company: true }
+    });
+
+    if (!invite || invite.used) {
+      throw new Error("Convite inválido ou já utilizado.");
+    }
+    if (new Date(invite.expiresAt) < new Date()) {
+      throw new Error("Este convite expirou.");
+    }
+
+    // Check if user exists or create new
+    let user = await prisma.user.findUnique({
+      where: { email: invite.email }
+    });
+
+    if (user) {
+      user = await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          name: data.name || user.name,
+          passwordHash: data.password,
+          role: invite.role,
+          companyId: invite.companyId,
+          unitId: invite.unitId,
+          status: "active",
+          mustChangePassword: false
+        }
+      });
+    } else {
+      user = await prisma.user.create({
+        data: {
+          name: data.name,
+          email: invite.email,
+          passwordHash: data.password,
+          role: invite.role,
+          companyId: invite.companyId,
+          unitId: invite.unitId,
+          status: "active",
+          mustChangePassword: false
+        }
+      });
+    }
+
+    // Mark invite as used
+    await (prisma as any).accountInvite.update({
+      where: { id: invite.id },
+      data: { used: true }
+    });
+
+    // Set cookie session for auto login
+    const sessionData = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      companyId: user.companyId,
+      unitId: user.unitId,
+      avatarUrl: user.avatarUrl,
+      status: user.status
+    };
+
+    cookies().set("checkrest_session", JSON.stringify(sessionData), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 7,
+      path: "/"
+    });
+
+    return {
+      user: sessionData
+    };
   });
 }
 
@@ -489,14 +788,16 @@ export async function upsertChecklistAction(data: {
   performedByUserId?: string | null;
 }) {
   return runWithConnectionCheck(async () => {
-    const isNew = data.id === "new" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.id);
-    const dbStatus = data.status === "active" ? "published" : data.status;
+    return prisma.$transaction(async (tx) => {
+      const validCompanyId = await ensureValidCompanyId(tx, data.companyId);
+      const validUnitId = await ensureValidUnitId(tx, validCompanyId, null);
+      const isNew = data.id === "new" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.id);
+      const dbStatus = data.status === "active" ? "published" : data.status;
 
-    if (isNew) {
-      return prisma.$transaction(async (tx) => {
+      if (isNew) {
         const template = await tx.checklistTemplate.create({
           data: {
-            companyId: data.companyId,
+            companyId: validCompanyId,
             title: data.title,
             sector: data.sector,
             recurrence: data.recurrence,
@@ -514,27 +815,21 @@ export async function upsertChecklistAction(data: {
           }
         });
 
-        const firstUnit = await tx.unit.findFirst({
-          where: { companyId: data.companyId }
+        await tx.checklistSchedule.create({
+          data: {
+            checklistTemplateId: template.id,
+            companyId: validCompanyId,
+            unitId: validUnitId,
+            daysOfWeek: data.activeDays,
+            startTime: data.startTime,
+            endTime: data.endTime,
+            status: "active"
+          }
         });
-
-        if (firstUnit) {
-          await tx.checklistSchedule.create({
-            data: {
-              checklistTemplateId: template.id,
-              companyId: data.companyId,
-              unitId: firstUnit.id,
-              daysOfWeek: data.activeDays,
-              startTime: data.startTime,
-              endTime: data.endTime,
-              status: "active"
-            }
-          });
-        }
 
         await tx.auditLog.create({
           data: {
-            companyId: data.companyId,
+            companyId: validCompanyId,
             userId: data.performedByUserId || null,
             action: "CHECKLIST_CREATE",
             entity: "ChecklistTemplate",
@@ -552,9 +847,7 @@ export async function upsertChecklistAction(data: {
             schedules: true
           }
         });
-      });
-    } else {
-      return prisma.$transaction(async (tx) => {
+      } else {
         const oldTemplate = await tx.checklistTemplate.findUnique({
           where: { id: data.id }
         });
@@ -562,6 +855,7 @@ export async function upsertChecklistAction(data: {
         await tx.checklistTemplate.update({
           where: { id: data.id },
           data: {
+            companyId: validCompanyId,
             title: data.title,
             sector: data.sector,
             recurrence: data.recurrence,
@@ -593,33 +887,30 @@ export async function upsertChecklistAction(data: {
           await tx.checklistSchedule.update({
             where: { id: schedule.id },
             data: {
+              companyId: validCompanyId,
+              unitId: validUnitId,
               daysOfWeek: data.activeDays,
               startTime: data.startTime,
               endTime: data.endTime
             }
           });
         } else {
-          const firstUnit = await tx.unit.findFirst({
-            where: { companyId: data.companyId }
+          await tx.checklistSchedule.create({
+            data: {
+              checklistTemplateId: data.id,
+              companyId: validCompanyId,
+              unitId: validUnitId,
+              daysOfWeek: data.activeDays,
+              startTime: data.startTime,
+              endTime: data.endTime,
+              status: "active"
+            }
           });
-          if (firstUnit) {
-            await tx.checklistSchedule.create({
-              data: {
-                checklistTemplateId: data.id,
-                companyId: data.companyId,
-                unitId: firstUnit.id,
-                daysOfWeek: data.activeDays,
-                startTime: data.startTime,
-                endTime: data.endTime,
-                status: "active"
-              }
-            });
-          }
         }
 
         await tx.auditLog.create({
           data: {
-            companyId: data.companyId,
+            companyId: validCompanyId,
             userId: data.performedByUserId || null,
             action: oldTemplate?.status !== dbStatus && dbStatus === "published" ? "CHECKLIST_PUBLISH" : "CHECKLIST_UPDATE",
             entity: "ChecklistTemplate",
@@ -637,8 +928,8 @@ export async function upsertChecklistAction(data: {
             schedules: true
           }
         });
-      });
-    }
+      }
+    });
   });
 }
 

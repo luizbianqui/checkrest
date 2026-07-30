@@ -58,7 +58,7 @@ export interface ChatMessage {
   };
 }
 
-export type Role = 'SAAS_ADMIN' | 'COMPANY_ADMIN' | 'UNIT_MANAGER' | 'OPERATOR';
+export type Role = 'SAAS_ADMIN' | 'RESELLER_ADMIN' | 'COMPANY_ADMIN' | 'UNIT_MANAGER' | 'OPERATOR';
 
 export interface User {
   id: string;
@@ -68,6 +68,7 @@ export interface User {
   email: string;
   role: Role;
   status: 'active' | 'inactive';
+  mustChangePassword?: boolean;
   avatarUrl?: string;
 }
 
@@ -75,10 +76,29 @@ export interface Company {
   id: string;
   name: string;
   cnpj: string;
-  plan: 'Basic' | 'Pro' | 'Enterprise';
+  plan: 'Basic' | 'Pro' | 'Enterprise' | string;
   status: 'active' | 'inactive';
+  parentCompanyId?: string | null;
+  maxLicenses?: number;
+  adminEmail?: string | null;
+  adminName?: string | null;
+  isReseller?: boolean;
+  subCompanies?: Company[];
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface AccountInvite {
+  id: string;
+  email: string;
+  role: Role;
+  companyId?: string | null;
+  unitId?: string | null;
+  token: string;
+  expiresAt: string | Date;
+  used: boolean;
+  createdAt?: string | Date;
+  company?: { name: string } | null;
 }
 
 export interface NonConformity {

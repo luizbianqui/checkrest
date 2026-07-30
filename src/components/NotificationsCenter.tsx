@@ -220,7 +220,7 @@ export default function NotificationsCenter({
 
           {/* Footer banner */}
           <div className="p-3 bg-slate-50 border-t border-slate-100 text-center text-[10px] text-slate-400 font-medium">
-            Exibindo desvios operacionais reais do Supabase
+            Alertas operacionais em tempo real
           </div>
         </div>
       )}

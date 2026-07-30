@@ -33,6 +33,7 @@ interface DashboardProps {
   units: Unit[];
   setActiveTab: (tab: "dashboard" | "checklists" | "editor" | "ai" | "settings" | "companies" | "collaborators" | "nonconformities" | "actionplans" | "reports") => void;
   setChatInput: (val: string) => void;
+  onOpenManagerCustomization?: () => void;
 }
 
 export default function Dashboard({
@@ -44,7 +45,8 @@ export default function Dashboard({
   setSelectedPeriodFilter,
   dashboardStats,
   units,
-  setActiveTab
+  setActiveTab,
+  onOpenManagerCustomization
 }: DashboardProps) {
   const managerUnit = units.find(u => u.id === currentUser?.unitId);
   const managerUnitName = managerUnit ? managerUnit.name : "Unidade Jardins";
@@ -71,7 +73,17 @@ export default function Dashboard({
       {/* Header and Filter */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h2 className="text-3xl font-black text-slate-900">Dashboard Operacional</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-3xl font-black text-slate-900">Dashboard Operacional</h2>
+            {currentUser?.role === "UNIT_MANAGER" && onOpenManagerCustomization && (
+              <button
+                onClick={onOpenManagerCustomization}
+                className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
+              >
+                ⚙️ Personalizar Teste / Zerar Dados
+              </button>
+            )}
+          </div>
           <p className="text-slate-500 text-sm mt-1">Visão geral do desempenho das unidades em tempo real.</p>
         </div>
 

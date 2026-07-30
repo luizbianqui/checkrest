@@ -11,7 +11,8 @@ import {
   AlertTriangle,
   Award,
   Activity,
-  Brain
+  Brain,
+  Inbox
 } from "lucide-react";
 import { Unit, Checklist, NonConformity, ActionPlan, Occurrence, User as UserType } from "@/types";
 
@@ -55,6 +56,23 @@ export default function ReportsManager({
   const [selectedSector, setSelectedSector] = useState("Todos");
   const [loading, setLoading] = useState(false);
 
+  // Scope Filtering
+  const filteredChecklists = checklists.filter(c => {
+    const matchSector = selectedSector === "Todos" || c.sector.toLowerCase().includes(selectedSector.toLowerCase());
+    return matchSector;
+  });
+
+  const filteredNCs = nonConformities.filter(nc => {
+    const matchUnit = selectedUnit === "Todas" || !currentUser?.unitId || nc.unitId === currentUser.unitId;
+    return matchUnit;
+  });
+
+  const filteredOccurrences = occurrences.filter(oc => {
+    const matchUnit = selectedUnit === "Todas" || !currentUser?.unitId || oc.unitId === currentUser.unitId;
+    const matchSector = selectedSector === "Todos" || oc.sector.toLowerCase().includes(selectedSector.toLowerCase());
+    return matchUnit && matchSector;
+  });
+
   const generateCSV = (rows: string[][], filename: string) => {
     const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
@@ -70,7 +88,6 @@ export default function ReportsManager({
     const XLSX = (await import("xlsx")).default;
     const ws = XLSX.utils.aoa_to_sheet(rows);
 
-    // Style header row (bold) - SheetJS CE supports column widths
     const colWidths = rows[0]?.map((_, i) => ({
       wch: Math.max(...rows.map(r => String(r[i] || "").length), 12)
     }));
@@ -94,57 +111,58 @@ export default function ReportsManager({
     const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
     const pageWidth = doc.internal.pageSize.getWidth();
     const dateStr = new Date().toLocaleDateString("pt-BR", { dateStyle: "long" });
-    const company = currentUser?.companyId ? `Empresa ${currentUser.companyId.slice(0, 8)}` : "CheckRest";
+    const companyName = currentUser?.name ? `Empresa / Responsável: ${currentUser.name}` : "CheckRest";
 
     // Header bar
-    doc.setFillColor(19, 27, 46); // #131b2e
-    doc.rect(0, 0, pageWidth, 20, "F");
+    doc.setFillColor(19, 27, 46);
+    doc.rect(0, 0, pageWidth, 22, "F");
 
-    // Logo text
     doc.setTextColor(255, 255, 255);
     doc.setFontSize(14);
     doc.setFont("helvetica", "bold");
-    doc.text("CheckRest", 14, 13);
+    doc.text("CheckRest — Relatório Operacional", 14, 14);
 
-    // Report title
-    doc.setFontSize(10);
-    doc.setFont("helvetica", "normal");
-    doc.text(`${title}`, pageWidth / 2, 13, { align: "center" });
-
-    // Date right-aligned
-    doc.setFontSize(8);
-    doc.text(dateStr, pageWidth - 14, 13, { align: "right" });
-
-    // Subtitle
-    doc.setTextColor(100, 116, 139);
     doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
-    doc.text(subtitle, 14, 28);
+    doc.text(companyName, pageWidth - 14, 14, { align: "right" });
 
-    // Company name
-    doc.setFontSize(8);
-    doc.text(company, pageWidth - 14, 28, { align: "right" });
+    // Document Title
+    doc.setTextColor(19, 27, 46);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text(title, 14, 34);
+
+    doc.setFontSize(10);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(100, 116, 139);
+    doc.text(`${subtitle} | Data: ${dateStr} | Período: ${selectedPeriodFilter}`, 14, 40);
 
     // Table
     autoTable(doc, {
-      startY: 33,
+      startY: 46,
       head: [headers],
-      body: rows,
-      styles: { fontSize: 8, cellPadding: 3 },
+      body: rows.length > 0 ? rows : [["Nenhum registro encontrado no período", "-", "-", "-", "-"]],
+      theme: "striped",
       headStyles: {
         fillColor: [19, 27, 46],
         textColor: [255, 255, 255],
-        fontStyle: "bold"
+        fontStyle: "bold",
+        fontSize: 9
       },
-      alternateRowStyles: { fillColor: [248, 250, 252] },
+      bodyStyles: {
+        fontSize: 8.5,
+        textColor: [51, 65, 85]
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 252]
+      },
       margin: { left: 14, right: 14 }
     });
 
-    // Footer on each page
     const pageCount = (doc as any).internal.getNumberOfPages();
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
-      doc.setFontSize(7);
+      doc.setFontSize(8);
       doc.setTextColor(148, 163, 184);
       doc.text(
         `Gerado pelo CheckRest — ${dateStr} | Página ${i} de ${pageCount}`,
@@ -162,15 +180,14 @@ export default function ReportsManager({
     const dateStr = new Date().toISOString().split("T")[0];
     const company = currentUser?.companyId || "empresa";
 
-    // --- Shared data sets for all formats ---
     const complianceRows: string[][] = [
       ["Título", "Setor", "Frequência", "Status", "Última Atualização"],
-      ...checklists.map(c => [c.title, c.sector, c.recurrence, c.status, c.lastUpdated || ""])
+      ...filteredChecklists.map(c => [c.title, c.sector, c.recurrence, c.status, c.lastUpdated || ""])
     ];
 
     const ncRows: string[][] = [
       ["Título", "Gravidade", "Status", "Data"],
-      ...nonConformities.map(nc => [
+      ...filteredNCs.map(nc => [
         nc.title,
         nc.severity || "",
         nc.status,
@@ -180,13 +197,13 @@ export default function ReportsManager({
 
     const execRows: string[][] = [
       ["Indicador", "Valor"],
-      ["Total de Checklists", String(checklists.length)],
-      ["Checklists Ativos", String(checklists.filter(c => c.status === "active").length)],
-      ["NCs em Aberto", String(nonConformities.filter(nc => nc.status === "open").length)],
-      ["NCs Resolvidas", String(nonConformities.filter(nc => nc.status === "resolved").length)],
+      ["Total de Checklists", String(filteredChecklists.length)],
+      ["Checklists Ativos", String(filteredChecklists.filter(c => c.status === "active").length)],
+      ["NCs em Aberto", String(filteredNCs.filter(nc => nc.status === "open").length)],
+      ["NCs Resolvidas", String(filteredNCs.filter(nc => nc.status === "resolved").length)],
       ["Planos de Ação Pendentes", String(actionPlans.filter(ap => ap.status === "pending").length)],
       ["Planos de Ação Concluídos", String(actionPlans.filter(ap => ap.status === "completed").length)],
-      ["Ocorrências Abertas", String(occurrences.filter(o => o.status === "open").length)]
+      ["Ocorrências Abertas", String(filteredOccurrences.filter(o => o.status === "open").length)]
     ];
 
     try {
@@ -198,7 +215,6 @@ export default function ReportsManager({
         } else {
           generateCSV(execRows, `executivo_${company}_${dateStr}.csv`);
         }
-
       } else if (format === "xlsx") {
         if (selectedReportType === "compliance") {
           await generateXLSX(complianceRows, "Conformidade", `conformidade_geral_${company}_${dateStr}.xlsx`);
@@ -207,7 +223,6 @@ export default function ReportsManager({
         } else {
           await generateXLSX(execRows, "Executivo", `executivo_${company}_${dateStr}.xlsx`);
         }
-
       } else if (format === "pdf") {
         if (selectedReportType === "compliance") {
           await generatePDF(
@@ -236,7 +251,6 @@ export default function ReportsManager({
         }
       }
 
-      // Audit log (fire-and-forget, non-blocking)
       try {
         const { logReportExportAction } = await import("@/app/actions/dbActions");
         await logReportExportAction({
@@ -246,9 +260,8 @@ export default function ReportsManager({
           format
         });
       } catch {
-        // Audit log failure should not block the export UX
+        // Audit log failure non-blocking
       }
-
     } catch (err) {
       console.error("[handleExport] Erro ao gerar relatório:", err);
       alert("Erro ao gerar o relatório. Verifique o console para detalhes.");
@@ -256,7 +269,6 @@ export default function ReportsManager({
       setLoading(false);
     }
   };
-
 
   return (
     <div className="space-y-6 animate-fadeIn">
@@ -449,10 +461,10 @@ export default function ReportsManager({
               {selectedReportType === "executive" && "Relatório Executivo Operacional & Insights"}
             </h3>
             <p className="text-xs text-slate-400 mt-1 font-semibold">
-              Gerado em: {new Date().toLocaleDateString("pt-BR")} | Período: {selectedPeriodFilter} | Unidade: {selectedUnit}
+              Gerado em: {new Date().toLocaleDateString("pt-BR")} | Período: {selectedPeriodFilter} | Responsável: {currentUser?.name || "Gerente"}
             </p>
           </div>
-          <div className="bg-slate-150 px-3 py-1.5 rounded-lg border border-slate-200 font-extrabold text-xs text-slate-700">
+          <div className="bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200 font-extrabold text-xs text-slate-700">
             CheckRest Reports
           </div>
         </div>
@@ -463,19 +475,23 @@ export default function ReportsManager({
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-center">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Score Geral</span>
-                <div className="text-2xl font-black text-emerald-600 mt-1">92.5%</div>
+                <div className="text-2xl font-black text-emerald-600 mt-1">
+                  {filteredChecklists.length > 0 ? "100%" : "0.0%"}
+                </div>
               </div>
               <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-center">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Checklists Previstos</span>
-                <div className="text-2xl font-black text-slate-800 mt-1">45</div>
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Checklists Cadastrados</span>
+                <div className="text-2xl font-black text-slate-800 mt-1">{filteredChecklists.length}</div>
               </div>
               <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-center">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Realizados</span>
-                <div className="text-2xl font-black text-slate-800 mt-1">42</div>
+                <div className="text-2xl font-black text-slate-800 mt-1">
+                  {filteredChecklists.filter(c => c.lastUpdated?.includes("Finalizado")).length}
+                </div>
               </div>
               <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-center">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Não Conformidades</span>
-                <div className="text-2xl font-black text-red-600 mt-1">3</div>
+                <div className="text-2xl font-black text-red-600 mt-1">{filteredNCs.length}</div>
               </div>
             </div>
 
@@ -483,31 +499,37 @@ export default function ReportsManager({
               <table className="w-full text-left border-collapse text-xs font-semibold">
                 <thead>
                   <tr className="bg-slate-50 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-200">
+                    <th className="px-4 py-3">Título do Checklist</th>
                     <th className="px-4 py-3">Setor</th>
-                    <th className="px-4 py-3">Auditorias</th>
-                    <th className="px-4 py-3">Score Médio</th>
+                    <th className="px-4 py-3">Frequência</th>
                     <th className="px-4 py-3 text-right">Status</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  <tr>
-                    <td className="px-4 py-3">Cozinha Central</td>
-                    <td className="px-4 py-3">20</td>
-                    <td className="px-4 py-3 font-bold text-emerald-600">96.8%</td>
-                    <td className="px-4 py-3 text-right"><span className="text-[9px] font-black uppercase text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">Meta Atingida</span></td>
-                  </tr>
-                  <tr>
-                    <td className="px-4 py-3">Atendimento</td>
-                    <td className="px-4 py-3">15</td>
-                    <td className="px-4 py-3 font-bold text-yellow-600 font-bold">84.2%</td>
-                    <td className="px-4 py-3 text-right"><span className="text-[9px] font-black uppercase text-yellow-700 bg-yellow-50 px-2 py-0.5 rounded">Alerta</span></td>
-                  </tr>
-                  <tr>
-                    <td className="px-4 py-3">Estoque</td>
-                    <td className="px-4 py-3">7</td>
-                    <td className="px-4 py-3 font-bold text-emerald-600 font-bold">94.5%</td>
-                    <td className="px-4 py-3 text-right"><span className="text-[9px] font-black uppercase text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded">Meta Atingida</span></td>
-                  </tr>
+                  {filteredChecklists.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-12 text-center text-slate-400">
+                        <Inbox className="w-8 h-8 mx-auto text-slate-300 mb-2" />
+                        <p className="font-bold text-slate-600">Nenhuma operação / checklist registrado no período.</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Cadastre um modelo de checklist ou execute uma auditoria para popular o relatório.</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredChecklists.map(c => (
+                      <tr key={c.id}>
+                        <td className="px-4 py-3 font-extrabold text-slate-800">{c.title}</td>
+                        <td className="px-4 py-3 text-slate-600">{c.sector}</td>
+                        <td className="px-4 py-3 text-slate-500">{c.recurrence}</td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
+                            c.status === "active" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-600"
+                          }`}>
+                            {c.status === "active" ? "Ativo" : c.status}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -529,26 +551,41 @@ export default function ReportsManager({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  <tr>
-                    <td className="px-4 py-3 text-slate-400 font-mono">18/06/2026</td>
-                    <td className="px-4 py-3">
-                      <div className="font-bold">Matriz - Centro</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">Cozinha Central</div>
-                    </td>
-                    <td className="px-4 py-3">Vazamento na câmara fria (válvula de expansão gotejando)</td>
-                    <td className="px-4 py-3"><span className="text-[9px] font-black uppercase bg-red-100 text-red-700 px-2 py-0.5 rounded">Alta</span></td>
-                    <td className="px-4 py-3 text-right"><span className="text-[9px] font-black uppercase bg-red-50 text-red-600 px-2 py-0.5 rounded-full">Pendente</span></td>
-                  </tr>
-                  <tr>
-                    <td className="px-4 py-3 text-slate-400 font-mono">15/06/2026</td>
-                    <td className="px-4 py-3">
-                      <div className="font-bold">Filial - Jardins</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">Estoque</div>
-                    </td>
-                    <td className="px-4 py-3">Temperatura do freezer a -8°C (fora do limite ideal de -18°C)</td>
-                    <td className="px-4 py-3"><span className="text-[9px] font-black uppercase bg-red-100 text-red-700 px-2 py-0.5 rounded">Alta</span></td>
-                    <td className="px-4 py-3 text-right"><span className="text-[9px] font-black uppercase bg-amber-50 text-amber-700 px-2 py-0.5 rounded-full">Em Tratamento</span></td>
-                  </tr>
+                  {filteredNCs.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-12 text-center text-slate-400">
+                        <CheckCircle className="w-8 h-8 mx-auto text-emerald-500 mb-2" />
+                        <p className="font-bold text-slate-700">Nenhuma não-conformidade registrada!</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">Operação em 100% de conformidade técnica.</p>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredNCs.map(nc => (
+                      <tr key={nc.id}>
+                        <td className="px-4 py-3 text-slate-400 font-mono">
+                          {nc.createdAt ? new Date(nc.createdAt).toLocaleDateString("pt-BR") : "N/A"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="font-bold">{nc.unit?.name || "Unidade"}</div>
+                        </td>
+                        <td className="px-4 py-3">{nc.title}</td>
+                        <td className="px-4 py-3">
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
+                            nc.severity === "high" || nc.severity === "critical" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                          }`}>
+                            {nc.severity || "Média"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                            nc.status === "open" ? "bg-red-50 text-red-600" : "bg-emerald-50 text-emerald-700"
+                          }`}>
+                            {nc.status === "open" ? "Pendente" : "Resolvido"}
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -559,47 +596,54 @@ export default function ReportsManager({
         {selectedReportType === "executive" && (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Ranking card */}
+              {/* Summary card */}
               <div className="bg-slate-50 rounded-xl p-5 border border-slate-100">
-                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-3">Ranking de Unidades</h4>
+                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-3">Resumo da Operação</h4>
                 <div className="space-y-3 font-semibold text-xs text-slate-700">
                   <div className="flex justify-between items-center">
-                    <span>1. Matriz - Centro</span>
-                    <span className="font-bold text-emerald-600">96.8%</span>
+                    <span>Total de Checklists Ativos:</span>
+                    <span className="font-bold text-slate-900">{filteredChecklists.length}</span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span>2. Filial - Jardins</span>
-                    <span className="font-bold text-yellow-600">84.2%</span>
+                    <span>Não Conformidades Abertas:</span>
+                    <span className="font-bold text-red-600">{filteredNCs.filter(nc => nc.status === "open").length}</span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span>Ocorrências Registradas:</span>
+                    <span className="font-bold text-slate-900">{filteredOccurrences.length}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Top Failures */}
+              {/* Status breakdown */}
               <div className="bg-slate-50 rounded-xl p-5 border border-slate-100">
-                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-3">Principais Falhas Recorrentes</h4>
+                <h4 className="font-bold text-slate-800 text-xs uppercase tracking-wider mb-3">Saúde do Sistema</h4>
                 <div className="space-y-3 font-semibold text-xs text-slate-700">
                   <div className="flex justify-between items-center">
-                    <span>1. Temperatura de congeladores</span>
-                    <span className="font-bold text-slate-500">3 ocorrências</span>
+                    <span>Status da Loja:</span>
+                    <span className="font-bold text-emerald-600">
+                      {filteredNCs.length === 0 ? "100% Conforme" : "Requer Atenção"}
+                    </span>
                   </div>
                   <div className="flex justify-between items-center">
-                    <span>2. Sanitização de bancadas</span>
-                    <span className="font-bold text-slate-500">2 ocorrências</span>
+                    <span>Planos de Ação Pendentes:</span>
+                    <span className="font-bold text-slate-700">{actionPlans.filter(ap => ap.status === "pending").length}</span>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* AI consultant suggestion block */}
-            <div className="bg-gradient-to-r from-emerald-800 to-[#131b2e] rounded-xl p-5 text-white space-y-2 relative overflow-hidden">
-              <div className="flex items-center gap-2 text-xs font-bold text-emerald-400 uppercase">
+            <div className="bg-gradient-to-r from-indigo-900 to-[#131b2e] rounded-xl p-5 text-white space-y-2 relative overflow-hidden">
+              <div className="flex items-center gap-2 text-xs font-bold text-indigo-300 uppercase">
                 <Brain className="w-4 h-4" />
-                <span>Recomendação da IA Consultiva CheckRest</span>
+                <span>Análise Inteligente CheckRest</span>
               </div>
               <p className="text-xs leading-relaxed text-slate-200">
-                &quot;Observamos um padrão de queda de 12% na conformidade aos domingos à noite na Filial - Jardins, associado à sanitização de bancadas e fechamento de caixa. Recomendamos antecipar a conferência de louças em 15 minutos e automatizar a notificação de fim de turno para a equipe de salão.&quot;
+                {filteredChecklists.length === 0
+                  ? "Nenhum checklist foi executado ainda nesta conta. Assim que você cadastrar e rodar os primeiros checklists, a IA gerará gráficos de tendência e recomendações automáticas de melhoria operacional."
+                  : `Operação com ${filteredChecklists.length} checklists cadastrados. Acompanhe a execução diária pela equipe para manter o score de conformidade elevado.`}
               </p>
-              <div className="absolute -bottom-10 -right-10 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl"></div>
             </div>
           </div>
         )}
