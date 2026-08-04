@@ -13,12 +13,12 @@ const DEMO_USERS = [
   {
     role: "SAAS_ADMIN" as const,
     label: "Admin SaaS",
-    email: "admin@saas.com",
+    email: "luizbianqui@gmail.com",
     password: "saas123",
     icon: Shield,
     color: "from-purple-500 to-indigo-600",
     desc: "Acesso global e controle de empresas",
-    name: "Ricardo Lima (SaaS CEO)",
+    name: "Luiz Bianqui (SaaS Admin)",
     companyId: null,
     unitId: null,
     avatarUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuBP0wy0mJQlq45ZKUlgz_QNDVftgVzwsr_FR28EwdyCwZqV3VpnEXhRq3BsAhHj4Y6mDx986mvQxkWr2-zK-v9hF8oO-Pmh_kQ2f_vicLRKOYKyTC0yC5kfVzS-WzFabmIZMcJxc2cWUioFVmKmzFcbH0ys_mv0Ezuq-4E8i8q-jsucR6Ad2gV7Z70qKshIQVq6rFoFrVyZhULy96OE0NCxllIXcjVLDubdMaMqGtCYwKneQIw_9p3wjfW_pSrgP2bn6scT834CsCc"
@@ -100,6 +100,15 @@ export default function Login({ onLogin }: LoginProps) {
     try {
       const res = await loginUserAction(email, password);
       if (res.success && res.data) {
+        if (res.data.status === "INVITE_PENDING" || res.data.status === "PENDING_ACTIVATION") {
+          setError("Sua conta aguarda ativação. Por favor, acesse o link seguro enviado para o seu e-mail.");
+          return;
+        }
+        if (res.data.status === "BLOCKED" || res.data.status === "inactive") {
+          setError("Sua conta está suspensa ou bloqueada. Entre em contato com o suporte.");
+          return;
+        }
+
         onLogin({
           id: res.data.id,
           name: res.data.name,
@@ -302,48 +311,6 @@ export default function Login({ onLogin }: LoginProps) {
                 Entrar no Sistema
               </button>
             </form>
-          </div>
-
-          {/* Quick-fill Demo Profiles Section */}
-          <div className="border-t border-white/5 pt-4 mt-4">
-            <div className="flex items-center justify-between mb-3">
-              <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                {clientMode ? "Acesso Rápido para Avaliação do Cliente" : "Acesso Rápido (Todos os Perfis)"}
-              </h4>
-              <button
-                type="button"
-                onClick={() => setClientMode(!clientMode)}
-                className="text-[10px] font-medium text-slate-500 hover:text-emerald-400 transition-colors underline"
-              >
-                {clientMode ? "Ver todos os perfis" : "Visão do Cliente (Gerente/Operador)"}
-              </button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {visibleDemoUsers.map((demo) => {
-                const DemoIcon = demo.icon;
-                return (
-                  <button
-                    key={demo.role}
-                    type="button"
-                    onClick={() => handleQuickFill(demo)}
-                    className="flex items-start gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-xl text-left hover:border-white/25 hover:bg-white/[0.04] transition-all group"
-                  >
-                    <div className={`p-1.5 rounded-lg bg-gradient-to-tr ${demo.color} text-slate-950 shrink-0 group-hover:scale-105 transition-transform`}>
-                      <DemoIcon className="w-4 h-4" />
-                    </div>
-                    <div className="overflow-hidden">
-                      <p className="text-xs font-bold text-white group-hover:text-emerald-400 transition-colors leading-tight">
-                        {demo.label}
-                      </p>
-                      <p className="text-[10px] text-slate-500 mt-0.5 truncate leading-tight">
-                        {demo.desc}
-                      </p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
           </div>
         </div>
 

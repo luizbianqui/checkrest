@@ -93,7 +93,7 @@ export default function SaaSAdminViews({
       const res = await createCompanyWithInviteAction({
         name: newCompanyName.trim(),
         cnpj: newCompanyCnpj.trim(),
-        plan: newCompanyPlan,
+        plan: "Enterprise",
         adminName: adminName.trim(),
         adminEmail: adminEmail.trim(),
         maxLicenses: Number(maxLicenses) || 5,
@@ -116,7 +116,7 @@ export default function SaaSAdminViews({
             name: data.company.name,
             cnpj: data.company.cnpj,
             plan: data.company.plan as any,
-            status: "active",
+            status: "PENDING_ACTIVATION" as any,
             isReseller: data.company.isReseller,
             maxLicenses: data.company.maxLicenses,
             adminEmail: data.company.adminEmail,
@@ -129,7 +129,7 @@ export default function SaaSAdminViews({
         setAdminName("");
         setAdminEmail("");
       } else {
-        alert("Erro ao cadastrar empresa: " + (res.error || "Tente novamente"));
+        alert("Erro ao cadastrar empresa: " + ((res as any).error || "Tente novamente"));
       }
     } catch (e: any) {
       alert("Erro ao cadastrar empresa: " + e.message);
@@ -171,26 +171,14 @@ export default function SaaSAdminViews({
     loadRealAdmins();
   }, []);
 
-  // Licenses & Contracts Mock Data
-  const [licenses, setLicenses] = useState([
-    { companyId: "comp-1", name: "Restaurante Modelo", unitsAllowed: 5, unitsActive: 2, usersAllowed: 20, usersActive: 12 },
-    { companyId: "comp-2", name: "Hamburgueria Express", unitsAllowed: 2, unitsActive: 1, usersAllowed: 5, usersActive: 3 },
-    { companyId: "comp-3", name: "Sushi Garden Group", unitsAllowed: 10, unitsActive: 3, usersAllowed: 50, usersActive: 0 }
-  ]);
+  // Licenses & Contracts State
+  const [licenses, setLicenses] = useState<any[]>([]);
 
   // Modules toggles
-  const [modules, setModules] = useState([
-    { companyId: "comp-1", name: "Restaurante Modelo", iaEnabled: true, offlineEnabled: true, reportsEnabled: true, customBranding: false },
-    { companyId: "comp-2", name: "Hamburgueria Express", iaEnabled: false, offlineEnabled: true, reportsEnabled: true, customBranding: false },
-    { companyId: "comp-3", name: "Sushi Garden Group", iaEnabled: true, offlineEnabled: true, reportsEnabled: true, customBranding: true }
-  ]);
+  const [modules, setModules] = useState<any[]>([]);
 
-  // Commercial Status Mock Data
-  const [contracts, setContracts] = useState([
-    { companyId: "comp-1", name: "Restaurante Modelo", startDate: "2026-01-10", endDate: "2027-01-10", billingCycle: "Mensal", value: 599.00, lastInvoiceStatus: "paid" },
-    { companyId: "comp-2", name: "Hamburgueria Express", startDate: "2026-03-15", endDate: "2027-03-15", billingCycle: "Anual", value: 2990.00, lastInvoiceStatus: "paid" },
-    { companyId: "comp-3", name: "Sushi Garden Group", startDate: "2025-12-01", endDate: "2026-12-01", billingCycle: "Mensal", value: 1199.00, lastInvoiceStatus: "overdue" }
-  ]);
+  // Commercial Status State
+  const [contracts, setContracts] = useState<any[]>([]);
 
   const handleAddAdmin = async () => {
     if (!newAdminName.trim() || !newAdminEmail.trim()) {
@@ -286,53 +274,62 @@ export default function SaaSAdminViews({
           </div>
 
           {/* Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-slate-400 uppercase">Faturamento Mensal</span>
-                <h3 className="text-2xl font-black text-slate-800 mt-1">R$ 2.397,00</h3>
-                <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">+12% este mês</span>
-              </div>
-              <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
-                <DollarSign className="w-6 h-6" />
-              </div>
-            </div>
+          {(() => {
+            const activeCompanies = companies.filter(c => c.status === "active");
+            return (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-400 uppercase">Licenças Globais Ativas</span>
+                    <h3 className="text-2xl font-black text-slate-800 mt-1">
+                      {activeCompanies.length} {activeCompanies.length === 1 ? "Empresa" : "Empresas"}
+                    </h3>
+                    <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-2 py-0.5 rounded-full mt-2 inline-block">
+                      Licenciamento Único Global
+                    </span>
+                  </div>
+                  <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600">
+                    <Crown className="w-6 h-6" />
+                  </div>
+                </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-slate-400 uppercase">Clientes Ativos</span>
-                <h3 className="text-2xl font-black text-slate-800 mt-1">
-                  {companies.filter(c => c.status === "active").length} / {companies.length}
-                </h3>
-                <span className="text-[10px] text-slate-400 font-medium mt-2 inline-block">SaaS Multi-tenancy</span>
-              </div>
-              <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600">
-                <Building className="w-6 h-6" />
-              </div>
-            </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-400 uppercase">Clientes Cadastrados</span>
+                    <h3 className="text-2xl font-black text-slate-800 mt-1">
+                      {activeCompanies.length} / {companies.length}
+                    </h3>
+                    <span className="text-[10px] text-slate-400 font-medium mt-2 inline-block">Gestão de Instância SaaS</span>
+                  </div>
+                  <div className="p-3 bg-indigo-50 rounded-xl text-indigo-600">
+                    <Building className="w-6 h-6" />
+                  </div>
+                </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-slate-400 uppercase">Saúde da Infraestrutura</span>
-                <h3 className="text-2xl font-black text-emerald-600 mt-1">99.9% Uptime</h3>
-                <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">Servidores OK</span>
-              </div>
-              <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
-                <Activity className="w-6 h-6" />
-              </div>
-            </div>
+                <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-400 uppercase">Saúde da Infraestrutura</span>
+                    <h3 className="text-2xl font-black text-emerald-600 mt-1">99.9% Uptime</h3>
+                    <span className="text-[10px] text-emerald-700 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">Servidores OK</span>
+                  </div>
+                  <div className="p-3 bg-emerald-50 rounded-xl text-emerald-600">
+                    <Activity className="w-6 h-6" />
+                  </div>
+                </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-slate-400 uppercase">Bugs / Suporte</span>
-                <h3 className="text-2xl font-black text-slate-800 mt-1">0 Abertos</h3>
-                <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">Operação Saudável</span>
+                <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm flex items-center justify-between">
+                  <div>
+                    <span className="text-xs font-bold text-slate-400 uppercase">Bugs / Suporte</span>
+                    <h3 className="text-2xl font-black text-slate-800 mt-1">0 Abertos</h3>
+                    <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full mt-2 inline-block">Operação Saudável</span>
+                  </div>
+                  <div className="p-3 bg-purple-50 rounded-xl text-purple-600">
+                    <ShieldCheck className="w-6 h-6" />
+                  </div>
+                </div>
               </div>
-              <div className="p-3 bg-purple-50 rounded-xl text-purple-600">
-                <ShieldCheck className="w-6 h-6" />
-              </div>
-            </div>
-          </div>
+            );
+          })()}
 
           {/* System Health & Status Banner */}
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 text-white shadow-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -361,27 +358,31 @@ export default function SaaSAdminViews({
             <div className="lg:col-span-2 bg-white border border-slate-200 rounded-xl p-6 shadow-sm">
               <h3 className="font-bold text-slate-800 text-sm mb-4">Empresas e Revendedores Cadastrados</h3>
               <div className="space-y-4">
-                {companies.slice(0, 5).map(c => (
-                  <div key={c.id} className="flex justify-between items-center p-3.5 bg-slate-50 border border-slate-100 rounded-lg">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-xs font-bold text-slate-800">{c.name}</h4>
-                        {c.isReseller && (
-                          <span className="px-2 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700 border border-purple-200 rounded-full">
-                            Empresa Administradora / Reseller
-                          </span>
-                        )}
+                {companies.length === 0 ? (
+                  <p className="text-xs text-slate-400 italic text-center py-8">Nenhuma empresa ou revendedor cadastrado ainda na plataforma.</p>
+                ) : (
+                  companies.slice(0, 5).map(c => (
+                    <div key={c.id} className="flex justify-between items-center p-3.5 bg-slate-50 border border-slate-100 rounded-lg">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-slate-800">{c.name}</h4>
+                          {c.isReseller && (
+                            <span className="px-2 py-0.5 text-[9px] font-bold bg-purple-100 text-purple-700 border border-purple-200 rounded-full">
+                              Empresa Administradora / Reseller
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-slate-400 mt-0.5">CNPJ: {c.cnpj} {c.adminEmail && `| Gestor: ${c.adminEmail}`}</p>
                       </div>
-                      <p className="text-[10px] text-slate-400 mt-0.5">CNPJ: {c.cnpj} {c.adminEmail && `| Gestor: ${c.adminEmail}`}</p>
+                      <div className="flex items-center gap-3">
+                        <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${
+                          c.plan === "Enterprise" ? "bg-purple-100 text-purple-700" : c.plan === "Pro" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
+                        }`}>{c.plan}</span>
+                        <span className={`w-2 h-2 rounded-full ${c.status === "active" ? "bg-emerald-500" : "bg-red-500"}`} />
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className={`px-2 py-0.5 text-[9px] font-black uppercase rounded ${
-                        c.plan === "Enterprise" ? "bg-purple-100 text-purple-700" : c.plan === "Pro" ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-blue-700"
-                      }`}>{c.plan}</span>
-                      <span className={`w-2 h-2 rounded-full ${c.status === "active" ? "bg-emerald-500" : "bg-red-500"}`} />
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
 
@@ -429,16 +430,6 @@ export default function SaaSAdminViews({
                 </div>
                 <div className="flex gap-2 w-full md:w-auto">
                   <select
-                    value={selectedPlanFilter}
-                    onChange={(e) => setSelectedPlanFilter(e.target.value)}
-                    className="border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-1.5 px-3 cursor-pointer"
-                  >
-                    <option value="Todos">Planos: Todos</option>
-                    <option value="Basic">Basic</option>
-                    <option value="Pro">Pro</option>
-                    <option value="Enterprise">Enterprise</option>
-                  </select>
-                  <select
                     value={selectedStatusFilter}
                     onChange={(e) => setSelectedStatusFilter(e.target.value)}
                     className="border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-1.5 px-3 cursor-pointer"
@@ -457,7 +448,7 @@ export default function SaaSAdminViews({
                     <thead>
                       <tr className="border-b border-slate-200 bg-slate-50/50 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                         <th className="px-6 py-3.5">Empresa & CNPJ</th>
-                        <th className="px-6 py-3.5">Plano</th>
+                        <th className="px-6 py-3.5">Licença / Acesso</th>
                         <th className="px-6 py-3.5">Status</th>
                         <th className="px-6 py-3.5 text-right">Ações</th>
                       </tr>
@@ -470,14 +461,8 @@ export default function SaaSAdminViews({
                             <div className="text-[10px] text-slate-400 font-mono mt-1">CNPJ: {company.cnpj}</div>
                           </td>
                           <td className="px-6 py-4">
-                            <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-wider border ${
-                              company.plan === "Enterprise"
-                                ? "bg-purple-50 text-purple-700 border-purple-200"
-                                : company.plan === "Pro"
-                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                                : "bg-blue-50 text-blue-700 border-blue-200"
-                            }`}>
-                              {company.plan}
+                            <span className="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-extrabold uppercase tracking-wider border bg-indigo-50 text-indigo-700 border-indigo-200">
+                              Acesso Total SaaS
                             </span>
                           </td>
                           <td className="px-6 py-4">
@@ -499,15 +484,6 @@ export default function SaaSAdminViews({
                                 }`}
                               >
                                 {company.status === "active" ? "Suspender" : "Ativar"}
-                              </button>
-                              <button
-                                onClick={() => {
-                                  const nextPlan = company.plan === "Basic" ? "Pro" : company.plan === "Pro" ? "Enterprise" : "Basic";
-                                  setCompanies(prev => prev.map(c => c.id === company.id ? { ...c, plan: nextPlan } : c));
-                                }}
-                                className="px-3 py-1.5 border border-slate-200 rounded-lg text-[10px] font-bold text-slate-600 hover:bg-slate-50 transition-colors uppercase"
-                              >
-                                Mudar Plano
                               </button>
                             </div>
                           </td>
@@ -599,19 +575,6 @@ export default function SaaSAdminViews({
                     />
                   </div>
                 )}
-
-                <div className="space-y-1">
-                  <label className="text-xs font-bold text-slate-500">Plano de Entrada</label>
-                  <select
-                    value={newCompanyPlan}
-                    onChange={(e) => setNewCompanyPlan(e.target.value as "Basic" | "Pro" | "Enterprise")}
-                    className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-2 px-3 cursor-pointer text-slate-800 font-semibold"
-                  >
-                    <option value="Basic">Basic (R$ 299/mês)</option>
-                    <option value="Pro">Pro (R$ 599/mês)</option>
-                    <option value="Enterprise">Enterprise (R$ 1199/mês)</option>
-                  </select>
-                </div>
 
                 <button
                   onClick={handleCreateCompanyWithInvite}

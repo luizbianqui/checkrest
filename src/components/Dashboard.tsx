@@ -33,7 +33,6 @@ interface DashboardProps {
   units: Unit[];
   setActiveTab: (tab: "dashboard" | "checklists" | "editor" | "ai" | "settings" | "companies" | "collaborators" | "nonconformities" | "actionplans" | "reports") => void;
   setChatInput: (val: string) => void;
-  onOpenManagerCustomization?: () => void;
 }
 
 export default function Dashboard({
@@ -45,8 +44,7 @@ export default function Dashboard({
   setSelectedPeriodFilter,
   dashboardStats,
   units,
-  setActiveTab,
-  onOpenManagerCustomization
+  setActiveTab
 }: DashboardProps) {
   const managerUnit = units.find(u => u.id === currentUser?.unitId);
   const managerUnitName = managerUnit ? managerUnit.name : "Unidade Jardins";
@@ -60,12 +58,12 @@ export default function Dashboard({
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div>
-              <h4 className="font-extrabold text-sm">Modo de Simulação Ativo (Fallback Local)</h4>
-              <p className="text-xs text-amber-800/80 mt-0.5">As credenciais do Supabase no arquivo `.env.local` são placeholders. A aplicação está simulando as operações com dados persistidos localmente.</p>
+              <h4 className="font-extrabold text-sm">Modo Offline (Armazenamento Local)</h4>
+              <p className="text-xs text-amber-800/80 mt-0.5">Sem conexão ativa ao banco PostgreSQL. As operações estão sendo salvas localmente e serão sincronizadas automaticamente ao reconectar.</p>
             </div>
           </div>
           <div className="text-xs font-bold text-amber-900 bg-white border border-amber-200 px-3 py-1.5 rounded-lg whitespace-nowrap self-start sm:self-center">
-            Offline / Demo Mode
+            Modo Local / Offline
           </div>
         </div>
       )}
@@ -75,14 +73,6 @@ export default function Dashboard({
         <div>
           <div className="flex items-center gap-3">
             <h2 className="text-3xl font-black text-slate-900">Dashboard Operacional</h2>
-            {currentUser?.role === "UNIT_MANAGER" && onOpenManagerCustomization && (
-              <button
-                onClick={onOpenManagerCustomization}
-                className="px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-bold transition-all shadow-sm flex items-center gap-1.5"
-              >
-                ⚙️ Personalizar Teste / Zerar Dados
-              </button>
-            )}
           </div>
           <p className="text-slate-500 text-sm mt-1">Visão geral do desempenho das unidades em tempo real.</p>
         </div>

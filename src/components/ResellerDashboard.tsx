@@ -140,7 +140,7 @@ export default function ResellerDashboard({
         setAdminEmail("");
         loadHierarchy();
       } else {
-        alert("Erro ao cadastrar empresa cliente: " + (res.error || "Tente novamente"));
+        alert("Erro ao cadastrar empresa cliente: " + ((res as any).error || "Tente novamente"));
       }
     } catch (err: any) {
       alert("Erro ao criar empresa cliente: " + err.message);

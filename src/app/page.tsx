@@ -30,7 +30,10 @@ import {
   Shield,
   Building,
   LogOut,
-  CheckCircle2
+  CheckCircle2,
+  Key,
+  Save,
+  Loader2
 } from "lucide-react";
 import { comprimirEvidencia } from "@/utils/imageCompressor";
 import { uploadFileToStorage } from "@/lib/supabase";
@@ -71,13 +74,15 @@ import {
   toggleUnitStatusAction,
   toggleUserStatusAction,
   createUserAction,
+  inviteCollaboratorAction,
   getUsersAction,
   createUnitAction,
   upsertChecklistAction,
   archiveChecklistAction,
   getAuditLogsAction,
   getCurrentSessionUser,
-  logoutUserAction
+  logoutUserAction,
+  updateUserProfileAction
 } from "@/app/actions/dbActions";
 import { askAIAction } from "@/app/actions/aiActions";
 import { useOfflineSync } from "@/hooks/useOfflineSync";
@@ -158,11 +163,7 @@ export default function Home() {
   const [isSessionLoaded, setIsSessionLoaded] = useState(false);
 
   // SaaS Companies State (Visible only to SAAS_ADMIN)
-  const [companies, setCompanies] = useState<Company[]>([
-    { id: "comp-1", name: "Restaurante Modelo", cnpj: "12.345.678/0001-90", plan: "Pro", status: "active" },
-    { id: "comp-2", name: "Hamburgueria Express", cnpj: "98.765.432/0001-10", plan: "Basic", status: "active" },
-    { id: "comp-3", name: "Sushi Garden Group", cnpj: "45.678.901/0001-20", plan: "Enterprise", status: "inactive" }
-  ]);
+  const [companies, setCompanies] = useState<Company[]>([]);
   const [newCompanyName, setNewCompanyName] = useState("");
   const [newCompanyCnpj, setNewCompanyCnpj] = useState("");
   const [newCompanyPlan, setNewCompanyPlan] = useState<"Basic" | "Pro" | "Enterprise">("Pro");
@@ -206,12 +207,73 @@ export default function Home() {
   const [mobileOccUnitId, setMobileOccUnitId] = useState("un-1");
   const [isMobileOccurrenceOpen, setIsMobileOccurrenceOpen] = useState(false);
   const [operatorIdentifierInput, setOperatorIdentifierInput] = useState("");
+  // User Profile Edit Modal States
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [profileName, setProfileName] = useState("");
+  const [profileEmail, setProfileEmail] = useState("");
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState("");
+  const [profileNewPassword, setProfileNewPassword] = useState("");
+  const [profileConfirmPassword, setProfileConfirmPassword] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
 
-  // Manager Customization Modal State for Client Testing
-  const [isManagerCustomizationOpen, setIsManagerCustomizationOpen] = useState(false);
-  const [managerCustomName, setManagerCustomName] = useState("");
-  const [managerCustomUnitName, setManagerCustomUnitName] = useState("");
-  const [cleanDatabaseOnSave, setCleanDatabaseOnSave] = useState(true);
+  const handleOpenProfileModal = () => {
+    if (!currentUser) return;
+    setProfileName(currentUser.name);
+    setProfileEmail(currentUser.email);
+    setProfileAvatarUrl(currentUser.avatarUrl || "");
+    setProfileNewPassword("");
+    setProfileConfirmPassword("");
+    setIsProfileModalOpen(true);
+  };
+
+  const handleSaveProfile = async () => {
+    if (!currentUser) return;
+    if (!profileName.trim()) {
+      alert("O nome de exibição não pode estar em branco.");
+      return;
+    }
+    if (profileNewPassword && profileNewPassword !== profileConfirmPassword) {
+      alert("A nova senha e a confirmação de senha não coincidem.");
+      return;
+    }
+    if (profileNewPassword && profileNewPassword.length < 6) {
+      alert("A nova senha deve ter no mínimo 6 caracteres.");
+      return;
+    }
+
+    setSavingProfile(true);
+    try {
+      if (dbConnected) {
+        await updateUserProfileAction({
+          userId: currentUser.id,
+          name: profileName.trim(),
+          avatarUrl: profileAvatarUrl.trim() || null,
+          newPassword: profileNewPassword.trim() || null
+        });
+      }
+
+      const updatedUser: UserType = {
+        ...currentUser,
+        name: profileName.trim(),
+        avatarUrl: profileAvatarUrl.trim() || undefined
+      };
+
+      setCurrentUser(updatedUser);
+
+      try {
+        localStorage.setItem("checkrest_user", JSON.stringify(updatedUser));
+      } catch (e) {
+        console.warn("Erro ao atualizar localStorage:", e);
+      }
+
+      setIsProfileModalOpen(false);
+      alert("Perfil e dados de acesso atualizados com sucesso!");
+    } catch (e: any) {
+      alert("Erro ao atualizar perfil: " + (e.message || e));
+    } finally {
+      setSavingProfile(false);
+    }
+  };
 
   // Non Conformities State
   const [nonConformities, setNonConformities] = useState<NonConformity[]>([]);
@@ -578,17 +640,9 @@ export default function Home() {
             setActiveTab("companies");
           }
         } else {
-          // Fallback local storage
-          const saved = localStorage.getItem("checkrest_user");
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            setCurrentUser(parsed);
-            if (parsed.role === "OPERATOR") {
-              setActiveTab("editor");
-            } else if (parsed.role === "SAAS_ADMIN") {
-              setActiveTab("companies");
-            }
-          }
+          // Sem sessão ativa no servidor: obriga exibição da tela de login
+          setCurrentUser(null);
+          localStorage.removeItem("checkrest_user");
         }
       } catch (e) {
         console.error("Erro ao carregar sessão:", e);
@@ -972,47 +1026,7 @@ export default function Home() {
     };
   }, [dbConnected, dashboardStats, checklists, checklistRuns, nonConformities, actionPlans, selectedUnitFilter, units, currentUser]);
 
-  const handleSaveManagerCustomization = () => {
-    if (!managerCustomName.trim()) {
-      alert("Por favor, informe o nome do gerente.");
-      return;
-    }
 
-    const newName = managerCustomName.trim();
-    const newUnit = managerCustomUnitName.trim() || "Unidade Jardins - Loja Centro";
-
-    if (currentUser) {
-      const updatedUser = {
-        ...currentUser,
-        name: newName
-      };
-      setCurrentUser(updatedUser);
-      localStorage.setItem("checkrest_user", JSON.stringify(updatedUser));
-    }
-
-    if (units.length > 0) {
-      const targetId = currentUser?.unitId || units[0].id;
-      setUnits(prev => prev.map(u => u.id === targetId ? { ...u, name: newUnit, managerName: newName } : u));
-      setSelectedUnitFilter(newUnit);
-    }
-
-    if (cleanDatabaseOnSave) {
-      setChecklistRuns([]);
-      setOccurrences([]);
-      setNonConformities([]);
-      setActionPlans([]);
-      setReadNotificationIds([]);
-
-      localStorage.removeItem("checkrest_occurrences");
-      localStorage.removeItem("checkrest_nonconformities");
-      localStorage.removeItem("checkrest_actionplans");
-      localStorage.removeItem("checkrest_checklist_runs");
-      localStorage.removeItem("checkrest_read_notifications");
-    }
-
-    setIsManagerCustomizationOpen(false);
-    alert(`Perfil personalizado com sucesso!\n• Gerente: ${newName}\n• Unidade: ${newUnit}${cleanDatabaseOnSave ? "\n• Banco de Dados zerado para o teste do cliente." : ""}`);
-  };
 
   // Checklist Filter State
   const [checklistStatusFilter, setChecklistStatusFilter] = useState<"active" | "draft" | "archived">("active");
@@ -1891,62 +1905,39 @@ export default function Home() {
       ? (currentUser.unitId || null)
       : (newUserUnitId === "Global" ? null : newUserUnitId);
 
-    if (dbConnected) {
-      const res = await createUserAction({
+    try {
+      const inviteRes = await inviteCollaboratorAction({
+        email: newUserEmail.trim(),
+        role: targetRole === "COMPANY_ADMIN" ? "OPERATOR" : (targetRole as any),
         companyId,
-        name: newUserName,
-        email: newUserEmail,
-        role: targetRole,
-        unitId: selectedUnitId,
-        passwordHash: "bobs123", // default password
-        performedByUserId: currentUser?.id
+        unitId: selectedUnitId || undefined,
+        createdById: currentUser?.id
       });
 
-      if (res.success && res.data) {
-        const added = res.data;
-        setUsers((prev) => [
-          {
-            id: added.id,
-            companyId: added.companyId || companyId,
-            unitId: added.unitId,
-            name: added.name,
-            email: added.email,
-            role: added.role as Role,
-            status: added.status as "active" | "inactive"
-          },
-          ...prev
-        ]);
-        setNewUserName("");
-        setNewUserEmail("");
-        setNewUserRole("OPERATOR");
-        setNewUserUnitId("Global");
-        setIsAddUserModalOpen(false);
-        alert("Colaborador cadastrado com sucesso!");
-        return;
-      } else {
-        alert("Erro ao cadastrar colaborador no banco: " + res.error);
-        return;
-      }
+      const tokenUrl = inviteRes.data?.inviteUrl || `/activate?token=token_${Date.now()}`;
+      const fullUrl = `${window.location.origin}${tokenUrl}`;
+
+      const newUser: UserType = {
+        id: "usr-" + Date.now(),
+        companyId,
+        unitId: selectedUnitId,
+        name: newUserName.trim(),
+        email: newUserEmail.trim(),
+        role: targetRole,
+        status: "inactive"
+      };
+
+      setUsers((prev) => [newUser, ...prev]);
+      setNewUserName("");
+      setNewUserEmail("");
+      setNewUserRole("OPERATOR");
+      setNewUserUnitId("Global");
+      setIsAddUserModalOpen(false);
+
+      alert(`Convite gerado com sucesso para ${newUserEmail}!\n\nLink de Ativação Seguro (Válido por 48h):\n${fullUrl}\n\nEnvie este link para que o colaborador confirme o e-mail e ative sua conta.`);
+    } catch (e: any) {
+      alert("Erro ao gerar convite para colaborador: " + (e.message || e));
     }
-
-    // Local / Offline mode fallback
-    const newUser: UserType = {
-      id: "usr-" + Date.now(),
-      companyId,
-      unitId: selectedUnitId,
-      name: newUserName,
-      email: newUserEmail,
-      role: targetRole,
-      status: "active"
-    };
-
-    setUsers((prev) => [newUser, ...prev]);
-    setNewUserName("");
-    setNewUserEmail("");
-    setNewUserRole("OPERATOR");
-    setNewUserUnitId("Global");
-    setIsAddUserModalOpen(false);
-    alert("Colaborador cadastrado localmente!");
   };
 
   // Action: Toggle Collaborator status (Activate/Suspend)
@@ -2580,24 +2571,32 @@ export default function Home() {
           )}
 
           <div className="flex items-center gap-3">
-            <div className="text-right hidden sm:block">
-              <p className="text-sm font-semibold text-slate-900">{currentUser?.name}</p>
-              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600">
-                {currentUser?.role === "SAAS_ADMIN" && "SaaS Admin"}
-                {currentUser?.role === "RESELLER_ADMIN" && "Revendedor Master"}
-                {currentUser?.role === "COMPANY_ADMIN" && "Admin Empresa"}
-                {currentUser?.role === "UNIT_MANAGER" && "Gerente de Unidade"}
-              </p>
-            </div>
-            <img
-              alt="User Profile"
-              className="h-9 w-9 rounded-full object-cover border border-slate-200 shadow-sm"
-              src={currentUser?.avatarUrl || "https://lh3.googleusercontent.com/aida-public/AB6AXuBP0wy0mJQlq45ZKUlgz_QNDVftgVzwsr_FR28EwdyCwZqV3VpnEXhRq3BsAhHj4Y6mDx986mvQxkWr2-zK-v9hF8oO-Pmh_kQ2f_vicLRKOYKyTC0yC5kfVzS-WzFabmIZMcJxc2cWUioFVmKmzFcbH0ys_mv0Ezuq-4E8i8q-jsucR6Ad2gV7Z70qKshIQVq6rFoFrVyZhULy96OE0NCxllIXcjVLDubdMaMqGtCYwKneQIw_9p3wjfW_pSrgP2bn6scT834CsCc"}
-            />
+            <button
+              type="button"
+              onClick={handleOpenProfileModal}
+              className="flex items-center gap-3 text-left hover:bg-slate-100/70 p-1.5 rounded-xl transition-all group cursor-pointer border border-transparent hover:border-slate-200"
+              title="Clique para editar Meu Perfil e Configurações de Conta"
+            >
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-semibold text-slate-900 group-hover:text-indigo-600 transition-colors leading-tight">{currentUser?.name}</p>
+                <p className="text-xs font-semibold uppercase tracking-wider text-emerald-600 leading-tight">
+                  {currentUser?.role === "SAAS_ADMIN" && "SaaS Admin"}
+                  {currentUser?.role === "RESELLER_ADMIN" && "Revendedor Master"}
+                  {currentUser?.role === "COMPANY_ADMIN" && "Admin Empresa"}
+                  {currentUser?.role === "UNIT_MANAGER" && "Gerente de Unidade"}
+                  {(currentUser?.role as any) === "OPERATOR" && "Operador"}
+                </p>
+              </div>
+              <img
+                alt="User Profile"
+                className="h-9 w-9 rounded-full object-cover border border-slate-200 group-hover:border-indigo-500 shadow-sm transition-all"
+                src={currentUser?.avatarUrl || "https://lh3.googleusercontent.com/aida-public/AB6AXuBP0wy0mJQlq45ZKUlgz_QNDVftgVzwsr_FR28EwdyCwZqV3VpnEXhRq3BsAhHj4Y6mDx986mvQxkWr2-zK-v9hF8oO-Pmh_kQ2f_vicLRKOYKyTC0yC5kfVzS-WzFabmIZMcJxc2cWUioFVmKmzFcbH0ys_mv0Ezuq-4E8i8q-jsucR6Ad2gV7Z70qKshIQVq6rFoFrVyZhULy96OE0NCxllIXcjVLDubdMaMqGtCYwKneQIw_9p3wjfW_pSrgP2bn6scT834CsCc"}
+              />
+            </button>
             <button
               onClick={handleLogout}
               className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors ml-1"
-              title="Sair"
+              title="Sair do Sistema"
             >
               <LogOut className="w-5 h-5" />
             </button>
@@ -2611,11 +2610,23 @@ export default function Home() {
           <div className="px-6 mb-6">
             <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
               <div className="w-8 h-8 bg-[#131b2e] rounded flex items-center justify-center text-white font-bold text-sm">
-                CR
+                {currentUser?.role === "SAAS_ADMIN" ? "👑" : currentUser?.role === "RESELLER_ADMIN" ? "🔑" : "CR"}
               </div>
               <div>
-                <p className="font-bold text-sm text-slate-800">Central Kitchen</p>
-                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Unidade Base</p>
+                <p className="font-bold text-sm text-slate-800">
+                  {currentUser?.role === "SAAS_ADMIN"
+                    ? "CheckRest Master"
+                    : currentUser?.role === "RESELLER_ADMIN"
+                    ? "Painel Revendedor"
+                    : "Central Kitchen"}
+                </p>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                  {currentUser?.role === "SAAS_ADMIN"
+                    ? "Gestão Global SaaS"
+                    : currentUser?.role === "RESELLER_ADMIN"
+                    ? "Gestão de Reseller"
+                    : "Unidade Operacional"}
+                </p>
               </div>
             </div>
           </div>
@@ -2632,7 +2643,7 @@ export default function Home() {
                   }`}
                 >
                   <Activity className="w-5 h-5 text-indigo-600" />
-                  Painel SaaS
+                  Painel Executivo
                 </button>
                 <button
                   onClick={() => setActiveTab("companies")}
@@ -2643,18 +2654,7 @@ export default function Home() {
                   }`}
                 >
                   <Building className="w-5 h-5 text-indigo-600" />
-                  Empresas SaaS
-                </button>
-                <button
-                  onClick={() => setActiveTab("licenses")}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                    activeTab === "licenses"
-                      ? "bg-slate-100 text-slate-900 font-bold border-r-4 border-slate-900"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                  }`}
-                >
-                  <Award className="w-5 h-5 text-indigo-600" />
-                  Licenças Vendidas
+                  Empresas & Convites
                 </button>
                 <button
                   onClick={() => setActiveTab("company_admins")}
@@ -2665,29 +2665,7 @@ export default function Home() {
                   }`}
                 >
                   <User className="w-5 h-5 text-indigo-600" />
-                  Admins de Empresa
-                </button>
-                <button
-                  onClick={() => setActiveTab("modules")}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                    activeTab === "modules"
-                      ? "bg-slate-100 text-slate-900 font-bold border-r-4 border-slate-900"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                  }`}
-                >
-                  <Layers className="w-5 h-5 text-indigo-600" />
-                  Módulos Liberados
-                </button>
-                <button
-                  onClick={() => setActiveTab("commercial_status")}
-                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                    activeTab === "commercial_status"
-                      ? "bg-slate-100 text-slate-900 font-bold border-r-4 border-slate-900"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
-                  }`}
-                >
-                  <Clock className="w-5 h-5 text-indigo-600" />
-                  Status Comercial
+                  Administradores
                 </button>
                 <button
                   onClick={() => setActiveTab("auditlogs")}
@@ -2861,7 +2839,6 @@ export default function Home() {
               units={units}
               setActiveTab={setActiveTab}
               setChatInput={setChatInput}
-              onOpenManagerCustomization={() => setIsManagerCustomizationOpen(true)}
             />
           )}
           {/* ========================================================================= */}
@@ -3884,84 +3861,7 @@ export default function Home() {
           )}
 
       {/* Occurrence Duplication Modal */}
-      {isManagerCustomizationOpen && (
-        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-md flex items-center justify-center z-50 p-4 animate-fadeIn">
-          <div className="bg-white border border-slate-200 rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-scaleUp">
-            <div className="px-6 py-5 bg-gradient-to-r from-indigo-900 to-[#131b2e] text-white flex justify-between items-center">
-              <div className="flex items-center gap-2">
-                <span className="p-2 bg-indigo-500/20 rounded-xl text-indigo-300">⚙️</span>
-                <div>
-                  <h3 className="font-extrabold text-sm tracking-tight">Personalizar Teste do Cliente (Perfil Gerente)</h3>
-                  <p className="text-[11px] text-slate-300 font-normal">Configure os dados reais do seu cliente para a demonstração</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setIsManagerCustomizationOpen(false)}
-                className="text-slate-400 hover:text-white transition-colors p-1"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            <div className="p-6 space-y-5 text-xs">
-              <div className="space-y-1.5">
-                <label className="block font-bold text-slate-700">Nome do Gerente / Cliente</label>
-                <input
-                  type="text"
-                  value={managerCustomName}
-                  onChange={(e) => setManagerCustomName(e.target.value)}
-                  placeholder="Ex: Carlos Oliveira (Gerente Geral)"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="block font-bold text-slate-700">Nome da Unidade / Restaurante</label>
-                <input
-                  type="text"
-                  value={managerCustomUnitName}
-                  onChange={(e) => setManagerCustomUnitName(e.target.value)}
-                  placeholder="Ex: Bob's Unidade Centro - Restaurante 01"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs text-slate-900 font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-600"
-                />
-              </div>
-
-              <div className="p-4 rounded-2xl bg-indigo-50/70 border border-indigo-100 space-y-2">
-                <label className="flex items-center gap-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={cleanDatabaseOnSave}
-                    onChange={(e) => setCleanDatabaseOnSave(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
-                  />
-                  <div>
-                    <span className="font-extrabold text-indigo-950 block text-xs">🧹 Iniciar com Banco Zerado (Limpar dados fictícios anteriores)</span>
-                    <span className="text-[11px] text-slate-600 block mt-0.5">
-                      Reseta execuções antigas, ocorrências e notificações para 0 pendências, garantindo um teste limpo do zero.
-                    </span>
-                  </div>
-                </label>
-              </div>
-
-              <div className="pt-2 flex gap-3">
-                <button
-                  onClick={() => setIsManagerCustomizationOpen(false)}
-                  className="flex-1 py-3 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 transition-colors uppercase text-[11px]"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleSaveManagerCustomization}
-                  className="flex-1 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-xl font-bold text-[11px] uppercase tracking-wider shadow-lg shadow-indigo-600/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Salvar e Iniciar Teste
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Occurrence Duplication Modal */}
       {isDuplicateModalOpen && occurrenceToDuplicate && (
@@ -4099,6 +3999,127 @@ export default function Home() {
           </>
         )}
       </nav>
+
+      {/* ========================================================================= */}
+      {/* MODAL: MEU PERFIL & CONFIGURAÇÕES DE CONTA                                */}
+      {/* ========================================================================= */}
+      {isProfileModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full overflow-hidden shadow-2xl border border-slate-100 animate-fadeIn">
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm">Meu Perfil & Configurações</h3>
+                  <p className="text-[10px] text-slate-400">Atualize seus dados pessoais e senha de acesso</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsProfileModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              {/* Foto de Perfil / Avatar */}
+              <div className="flex items-center gap-4 p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                <img
+                  src={profileAvatarUrl || currentUser?.avatarUrl || "https://lh3.googleusercontent.com/aida-public/AB6AXuBP0wy0mJQlq45ZKUlgz_QNDVftgVzwsr_FR28EwdyCwZqV3VpnEXhRq3BsAhHj4Y6mDx986mvQxkWr2-zK-v9hF8oO-Pmh_kQ2f_vicLRKOYKyTC0yC5kfVzS-WzFabmIZMcJxc2cWUioFVmKmzFcbH0ys_mv0Ezuq-4E8i8q-jsucR6Ad2gV7Z70qKshIQVq6rFoFrVyZhULy96OE0NCxllIXcjVLDubdMaMqGtCYwKneQIw_9p3wjfW_pSrgP2bn6scT834CsCc"}
+                  alt="Avatar Preview"
+                  className="w-14 h-14 rounded-full object-cover border-2 border-indigo-500/30 shadow-sm shrink-0"
+                />
+                <div className="flex-1 space-y-1">
+                  <label className="text-xs font-bold text-slate-600">URL da Foto de Perfil</label>
+                  <input
+                    type="url"
+                    value={profileAvatarUrl}
+                    onChange={(e) => setProfileAvatarUrl(e.target.value)}
+                    placeholder="https://exemplo.com/foto.jpg"
+                    className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-1.5 px-3 text-slate-800"
+                  />
+                </div>
+              </div>
+
+              {/* Nome */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-600">Nome de Exibição</label>
+                <input
+                  type="text"
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-2 px-3 text-slate-800 font-semibold"
+                  placeholder="Seu Nome Completo"
+                />
+              </div>
+
+              {/* E-mail (somente leitura) */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-600">E-mail Cadastrado</label>
+                <input
+                  type="email"
+                  value={profileEmail}
+                  disabled
+                  className="w-full border-slate-200 bg-slate-100 rounded-lg text-xs py-2 px-3 text-slate-500 font-medium cursor-not-allowed"
+                />
+              </div>
+
+              {/* Seção Alterar Senha */}
+              <div className="pt-2 border-t border-slate-100 space-y-3">
+                <p className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Key className="w-3.5 h-3.5 text-indigo-600" />
+                  Alterar Senha de Acesso (Opcional)
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500">Nova Senha</label>
+                    <input
+                      type="password"
+                      value={profileNewPassword}
+                      onChange={(e) => setProfileNewPassword(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-1.5 px-3 text-slate-800"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-slate-500">Confirmar Senha</label>
+                    <input
+                      type="password"
+                      value={profileConfirmPassword}
+                      onChange={(e) => setProfileConfirmPassword(e.target.value)}
+                      placeholder="Repita a nova senha"
+                      className="w-full border-slate-200 focus:ring-1 focus:ring-slate-900 rounded-lg text-xs py-1.5 px-3 text-slate-800"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setIsProfileModalOpen(false)}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveProfile}
+                disabled={savingProfile}
+                className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-2 shadow-sm disabled:opacity-50"
+              >
+                {savingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                Salvar Alterações
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
