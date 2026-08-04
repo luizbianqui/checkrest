@@ -72,10 +72,6 @@ function ActivateForm() {
         setSubmitError("Por favor, informe seu e-mail do Google.");
         return;
       }
-      if (googleEmailInput.trim().toLowerCase() !== inviteData?.email?.trim().toLowerCase()) {
-        setSubmitError(`O e-mail utilizado no Google (${googleEmailInput}) não corresponde ao e-mail convidado (${inviteData?.email}). Entre com a conta correta.`);
-        return;
-      }
     }
 
     if (authMethod === "PASSWORD") {
@@ -274,7 +270,7 @@ function ActivateForm() {
                   placeholder="exemplo@empresa.com.br"
                   className="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs text-white font-semibold focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                 />
-                <p className="text-[10px] text-slate-500">O sistema valida se o e-mail do Google é exatamente igual ao e-mail que recebeu o convite.</p>
+                <p className="text-[10px] text-indigo-300 font-medium">Este e-mail do Google será vinculado como a conta oficial do Administrador Proprietário da empresa.</p>
               </div>
             ) : (
               <div className="space-y-3">

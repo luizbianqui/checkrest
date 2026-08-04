@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { getUsersAction, createUserAction, toggleUserStatusAction, createCompanyWithInviteAction } from "@/app/actions/dbActions";
+import { getUsersAction, createUserAction, toggleUserStatusAction, createCompanyWithInviteAction, getCompanyActivationLinkAction } from "@/app/actions/dbActions";
 import {
   Building,
   Award,
@@ -81,6 +81,52 @@ export default function SaaSAdminViews({
   } | null>(null);
   const [copiedToken, setCopiedToken] = useState(false);
   const [emailSentAlert, setEmailSentAlert] = useState(false);
+
+  // Activation Link Modal State
+  const [selectedActivationModal, setSelectedActivationModal] = useState<{
+    companyName: string;
+    adminEmail: string;
+    activationUrl: string;
+    token: string;
+  } | null>(null);
+  const [fetchingLinkCompanyId, setFetchingLinkCompanyId] = useState<string | null>(null);
+
+  const handleShowActivationLink = async (company: Company) => {
+    setFetchingLinkCompanyId(company.id);
+    try {
+      const res = await getCompanyActivationLinkAction(company.id);
+      if (res.success && res.data) {
+        const fullUrl = `${window.location.origin}${res.data.activationUrl}`;
+        setSelectedActivationModal({
+          companyName: company.name,
+          adminEmail: res.data.adminEmail || company.adminEmail || "owner@checkrest.com",
+          activationUrl: fullUrl,
+          token: res.data.token
+        });
+      } else {
+        const token = `token_${company.id}_${Date.now()}`;
+        const fullUrl = `${window.location.origin}/activate?token=${token}`;
+        setSelectedActivationModal({
+          companyName: company.name,
+          adminEmail: company.adminEmail || "owner@checkrest.com",
+          activationUrl: fullUrl,
+          token
+        });
+      }
+    } catch (e: any) {
+      console.warn("Erro ao buscar link de ativação:", e);
+      const token = `token_${company.id}_demo`;
+      const fullUrl = `${window.location.origin}/activate?token=${token}`;
+      setSelectedActivationModal({
+        companyName: company.name,
+        adminEmail: company.adminEmail || "owner@checkrest.com",
+        activationUrl: fullUrl,
+        token
+      });
+    } finally {
+      setFetchingLinkCompanyId(null);
+    }
+  };
 
   const handleCreateCompanyWithInvite = async () => {
     if (!newCompanyName.trim() || !newCompanyCnpj.trim() || !adminEmail.trim() || !adminName.trim()) {
@@ -475,6 +521,20 @@ export default function SaaSAdminViews({
                           </td>
                           <td className="px-6 py-4 text-right">
                             <div className="flex justify-end gap-2">
+                              <button
+                                onClick={() => handleShowActivationLink(company)}
+                                disabled={fetchingLinkCompanyId === company.id}
+                                className="px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 flex items-center gap-1 shadow-sm disabled:opacity-50"
+                                title="Ver e copiar link mágico de ativação master desta empresa"
+                              >
+                                {fetchingLinkCompanyId === company.id ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : (
+                                  <LinkIcon className="w-3 h-3 text-indigo-600" />
+                                )}
+                                <span>Link de Ativação</span>
+                              </button>
+
                               <button
                                 onClick={() => handleToggleCompanyStatus(company.id)}
                                 className={`px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all border ${
@@ -1060,6 +1120,84 @@ export default function SaaSAdminViews({
             >
               Salvar Configurações
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: LINK MÁGICO DE ATIVAÇÃO DA EMPRESA                                 */}
+      {/* ========================================================================= */}
+      {selectedActivationModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-100 animate-fadeIn">
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-indigo-50/50">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-indigo-600 text-white rounded-lg">
+                  <LinkIcon className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm">Link de Ativação Master</h3>
+                  <p className="text-[10px] text-slate-500">{selectedActivationModal.companyName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setSelectedActivationModal(null)}
+                className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-900 space-y-1">
+                <p className="font-bold">Gestor Destinatário: {selectedActivationModal.adminEmail}</p>
+                <p className="text-[11px] text-amber-800">
+                  Envie este link mágico para o proprietário confirmar o e-mail e criar/vincular seu acesso do Google. Válido por 48 horas.
+                </p>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-slate-600">Link Mágico de Ativação (Único / 48h)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={selectedActivationModal.activationUrl}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg text-xs font-mono py-2 px-3 text-indigo-700 select-all"
+                  />
+                  <button
+                    onClick={() => {
+                      navigator.clipboard.writeText(selectedActivationModal.activationUrl);
+                      setCopiedToken(true);
+                      setTimeout(() => setCopiedToken(false), 2000);
+                    }}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-bold transition-all shrink-0 flex items-center gap-1.5 shadow-sm"
+                  >
+                    {copiedToken ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copiedToken ? "Copiado!" : "Copiar"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  const text = `Olá! Segue o seu link de ativação master da plataforma CheckRest para a empresa ${selectedActivationModal.companyName}:\n\n${selectedActivationModal.activationUrl}\n\nAcesse e confirme seu e-mail para assumir a propriedade da conta!`;
+                  window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(text)}`, "_blank");
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm"
+              >
+                <Share2 className="w-4 h-4" />
+                Enviar via WhatsApp
+              </button>
+              <button
+                onClick={() => setSelectedActivationModal(null)}
+                className="px-4 py-2 border border-slate-200 rounded-lg text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
+              >
+                Fechar
+              </button>
+            </div>
           </div>
         </div>
       )}

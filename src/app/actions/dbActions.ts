@@ -446,6 +446,56 @@ export async function createCompanyWithInviteAction(data: {
 }
 
 /**
+ * Obtains or regenerates the 48h activation link for a registered company.
+ */
+export async function getCompanyActivationLinkAction(companyId: string) {
+  return runWithConnectionCheck(async () => {
+    const company = await (prisma as any).company.findUnique({
+      where: { id: companyId }
+    });
+
+    if (!company) {
+      throw new Error("Empresa não encontrada.");
+    }
+
+    // Look for existing valid unused invite
+    let invite = await (prisma as any).accountInvite.findFirst({
+      where: {
+        companyId: companyId,
+        used: false,
+        expiresAt: { gt: new Date() }
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    // If no valid invite exists, create a fresh 48h token
+    if (!invite) {
+      const newToken = typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : `token_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+      const expiresAt = new Date(Date.now() + 48 * 60 * 60 * 1000);
+      invite = await (prisma as any).accountInvite.create({
+        data: {
+          email: company.adminEmail || "owner@checkrest.com",
+          role: company.isReseller ? "RESELLER_ADMIN" : "COMPANY_ADMIN",
+          companyId: company.id,
+          token: newToken,
+          expiresAt: expiresAt,
+          used: false
+        }
+      });
+    }
+
+    const activationUrl = `/activate?token=${invite.token}`;
+    return {
+      token: invite.token,
+      expiresAt: invite.expiresAt,
+      activationUrl,
+      adminEmail: company.adminEmail,
+      companyName: company.name
+    };
+  });
+}
+
+/**
  * Retrieves full company hierarchy, parent, and sub-companies with license usage.
  */
 export async function getCompanyHierarchyAction(companyId: string) {
@@ -582,21 +632,23 @@ export async function activateAccountAction(data: {
   const method = data.authMethod || "PASSWORD";
 
   // Validação estrita de e-mail do Google OAuth
-  if (method === "GOOGLE") {
-    if (!data.googleEmail) {
-      return { success: false, error: "Nenhum e-mail do Google foi retornado para verificação." };
-    }
-    if (data.googleEmail.toLowerCase().trim() !== invite.email.toLowerCase().trim()) {
-      return {
-        success: false,
-        error: `O e-mail utilizado no Google (${data.googleEmail}) não corresponde ao e-mail convidado (${invite.email}). Entre com a conta correta.`
-      };
-    }
+  const targetEmail = (method === "GOOGLE" && data.googleEmail)
+    ? data.googleEmail.toLowerCase().trim()
+    : invite.email.toLowerCase().trim();
+
+  if (method === "GOOGLE" && !data.googleEmail) {
+    return { success: false, error: "Nenhum e-mail do Google foi informado para verificação." };
   }
 
   const dbRes = await runWithConnectionCheck(async () => {
-    let user = await prisma.user.findUnique({
-      where: { email: invite.email }
+    // Buscar usuario por targetEmail ou por invite.email
+    let user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: targetEmail },
+          { email: invite.email }
+        ]
+      }
     });
 
     if (user) {
@@ -604,6 +656,7 @@ export async function activateAccountAction(data: {
         where: { id: user.id },
         data: {
           name: data.name || user.name,
+          email: targetEmail,
           passwordHash: method === "PASSWORD" ? data.password : user.passwordHash,
           role: invite.role,
           companyId: invite.companyId,
@@ -616,7 +669,7 @@ export async function activateAccountAction(data: {
       user = await prisma.user.create({
         data: {
           name: data.name,
-          email: invite.email,
+          email: targetEmail,
           passwordHash: method === "PASSWORD" ? data.password : null,
           role: invite.role,
           companyId: invite.companyId,
@@ -627,14 +680,14 @@ export async function activateAccountAction(data: {
       });
     }
 
-    // Se for COMPANY_ADMIN, ativa a empresa
+    // Se for gestor de empresa, ativa a empresa e registra o e-mail oficial
     if (invite.companyId) {
       await (prisma as any).company.update({
         where: { id: invite.companyId },
         data: {
           status: "active",
           adminName: data.name,
-          adminEmail: invite.email
+          adminEmail: targetEmail
         }
       });
     }
@@ -652,8 +705,8 @@ export async function activateAccountAction(data: {
       action: "ACCOUNT_ACTIVATED_OWNERSHIP_CONFIRMED",
       entity: "User",
       entityId: user.id,
-      oldValue: null,
-      newValue: JSON.stringify({ method, email: invite.email, termsVersion: "v1.0", ip: data.userIp || "127.0.0.1" })
+      oldValue: invite.email,
+      newValue: JSON.stringify({ method, email: targetEmail, termsVersion: "v1.0", ip: data.userIp || "127.0.0.1" })
     });
 
     return user;
