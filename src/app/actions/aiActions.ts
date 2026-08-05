@@ -167,9 +167,10 @@ function buildFallbackResponse(prompt: string, context: AIContext): AIResponse {
 
 export async function askAIAction(
   prompt: string,
-  context: AIContext
+  context: AIContext,
+  customApiKey?: string
 ): Promise<AIResponse> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = customApiKey?.trim() || process.env.GEMINI_API_KEY;
 
   // Se não houver chave, usar fallback
   if (!apiKey) {

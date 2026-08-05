@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Building, Store, Layers, Users, CheckCircle2, ArrowRight, ArrowLeft, Sparkles, Copy, Check, ShieldCheck } from "lucide-react";
+import { Building, Store, Layers, Users, CheckCircle2, ArrowRight, ArrowLeft, Sparkles, Copy, Check, ShieldCheck, X } from "lucide-react";
 import { Unit } from "@/types";
 
 interface OnboardingWizardProps {
@@ -79,13 +79,15 @@ export default function OnboardingWizard({ companyName: initialCompanyName, onCo
                 <p className="text-xs text-slate-300">Prepare sua empresa em menos de 2 minutos para o teste piloto.</p>
               </div>
             </div>
-            
             {onSkip && (
               <button
+                type="button"
                 onClick={onSkip}
-                className="text-xs text-slate-400 hover:text-white underline font-semibold transition-colors"
+                className="text-xs text-slate-400 hover:text-red-400 font-semibold transition-colors flex items-center gap-1 bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg"
+                title="Sair para a tela de Login"
               >
-                Pular Wizard
+                <X className="w-3.5 h-3.5" />
+                Cancelar Cadastro
               </button>
             )}
           </div>

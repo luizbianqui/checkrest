@@ -33,7 +33,8 @@ import {
   CheckCircle2,
   Key,
   Save,
-  Loader2
+  Loader2,
+  Copy
 } from "lucide-react";
 import { comprimirEvidencia } from "@/utils/imageCompressor";
 import { uploadFileToStorage } from "@/lib/supabase";
@@ -73,6 +74,7 @@ import {
   deleteDocumentAction,
   toggleUnitStatusAction,
   toggleUserStatusAction,
+  deleteUserAction,
   createUserAction,
   inviteCollaboratorAction,
   getUsersAction,
@@ -173,9 +175,26 @@ export default function Home() {
 
   // Gestão de Cadastro States (Unidades, Setores, Colaboradores)
   const [cadastroSubTab, setCadastroSubTab] = useState<"units" | "sectors" | "users">("units");
-  const [sectors, setSectors] = useState<string[]>([]);
+  const [sectors, setSectors] = useState<string[]>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("checkrest_sectors");
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        } catch (e) {}
+      }
+    }
+    return ["Cozinha", "Salão", "Estoque", "Atendimento"];
+  });
   const [newSectorName, setNewSectorName] = useState("");
   const [showOnboardingWizard, setShowOnboardingWizard] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("checkrest_sectors", JSON.stringify(sectors));
+    }
+  }, [sectors]);
 
   // Database Connection & Synchronization State
   const [dbConnected, setDbConnected] = useState<boolean | null>(null);
@@ -274,6 +293,38 @@ export default function Home() {
       setSavingProfile(false);
     }
   };
+
+  // RBAC Tab Access Route Guard
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const adminTabs = ["dashboard_saas", "companies", "licenses", "company_admins", "modules", "commercial_status", "auditlogs", "global_settings"];
+    
+    if (currentUser.role === "OPERATOR") {
+      const allowed = ["editor", "occurrences", "settings", "ai"];
+      if (!allowed.includes(activeTab)) {
+        setActiveTab("editor");
+      }
+    } else if (currentUser.role === "UNIT_MANAGER") {
+      if (adminTabs.includes(activeTab) || activeTab === "reseller_dashboard") {
+        setActiveTab("dashboard");
+      }
+    } else if (currentUser.role === "COMPANY_ADMIN") {
+      if (adminTabs.includes(activeTab) || activeTab === "reseller_dashboard") {
+        setActiveTab("dashboard");
+      }
+    } else if (currentUser.role === "RESELLER_ADMIN") {
+      const allowedReseller = ["reseller_dashboard", "cadastros", "reports", "settings"];
+      if (!allowedReseller.includes(activeTab)) {
+        setActiveTab("reseller_dashboard");
+      }
+    } else if (currentUser.role === "SAAS_ADMIN") {
+      const allowedSaas = [...adminTabs, "settings"];
+      if (!allowedSaas.includes(activeTab)) {
+        setActiveTab("companies");
+      }
+    }
+  }, [activeTab, currentUser]);
 
   // Non Conformities State
   const [nonConformities, setNonConformities] = useState<NonConformity[]>([]);
@@ -673,7 +724,7 @@ export default function Home() {
         setActiveTab("dashboard");
       }
     } else if (currentUser.role === "RESELLER_ADMIN") {
-      const allowedReseller = ["reseller_dashboard", "cadastros", "settings"];
+      const allowedReseller = ["reseller_dashboard", "cadastros", "reports", "settings"];
       if (!allowedReseller.includes(activeTab)) {
         setActiveTab("reseller_dashboard");
       }
@@ -1085,6 +1136,12 @@ export default function Home() {
   const activeOccurrencesCount = useMemo(() => {
     return occurrences.filter(occ => occ.status === "open" || occ.status === "in_progress").length;
   }, [occurrences]);
+
+  const availableSectors = useMemo(() => {
+    const fromChecklists = checklists.map(c => c.sector).filter(Boolean);
+    const combined = Array.from(new Set([...sectors, ...fromChecklists]));
+    return combined.length > 0 ? combined : ["Cozinha", "Salão", "Estoque", "Atendimento"];
+  }, [sectors, checklists]);
 
   // Action: Open Editor for a Checklist
   const handleOpenChecklistEditor = (checklist: Checklist) => {
@@ -1744,7 +1801,8 @@ export default function Home() {
     };
 
     try {
-      const response = await askAIAction(chatInput, aiContext);
+      const customApiKey = localStorage.getItem("checkrest_gemini_api_key") || undefined;
+      const response = await askAIAction(chatInput, aiContext, customApiKey);
 
       const aiMsg: ChatMessage = {
         id: "msg-ai-" + Date.now(),
@@ -1914,7 +1972,9 @@ export default function Home() {
         createdById: currentUser?.id
       });
 
-      const tokenUrl = inviteRes.data?.inviteUrl || `/activate?token=token_${Date.now()}`;
+      const tokenUrl = inviteRes.data?.inviteUrl 
+        ? `${inviteRes.data.inviteUrl}&email=${encodeURIComponent(newUserEmail.trim())}&name=${encodeURIComponent(newUserName.trim())}&role=${targetRole}`
+        : `/activate?token=invite_new_${Date.now()}&email=${encodeURIComponent(newUserEmail.trim())}&name=${encodeURIComponent(newUserName.trim())}&role=${targetRole}`;
       const fullUrl = `${window.location.origin}${tokenUrl}`;
 
       const newUser: UserType = {
@@ -1968,6 +2028,39 @@ export default function Home() {
         u.id === userId ? { ...u, status: u.status === "active" ? "inactive" : "active" } : u
       )
     );
+  };
+
+  // Action: Delete Collaborator
+  const handleDeleteUser = async (userId: string) => {
+    const usr = users.find(u => u.id === userId);
+    if (!usr) return;
+
+    if (!confirm(`Tem certeza que deseja excluir o colaborador "${usr.name}" (${usr.email})? Esta ação removerá o acesso permanentemente.`)) {
+      return;
+    }
+
+    if (dbConnected) {
+      const res = await deleteUserAction(userId, currentUser?.id);
+      if (res.success) {
+        setUsers((prev) => prev.filter(u => u.id !== userId));
+        alert("Colaborador excluído com sucesso!");
+        return;
+      } else {
+        alert("Erro ao excluir colaborador no banco: " + res.error);
+        return;
+      }
+    }
+
+    // Local / Offline fallback
+    setUsers((prev) => prev.filter(u => u.id !== userId));
+    alert("Colaborador excluído localmente com sucesso!");
+  };
+
+  // Action: Copy Invite / Access Link for Collaborator
+  const handleCopyInviteLink = (usr: UserType) => {
+    const linkUrl = `${window.location.origin}/activate?token=invite_${usr.id}&email=${encodeURIComponent(usr.email)}&name=${encodeURIComponent(usr.name)}&role=${usr.role}`;
+    navigator.clipboard.writeText(linkUrl);
+    alert(`Link de acesso do colaborador "${usr.name}" copiado com sucesso!\n\n${linkUrl}\n\nEnvie este link para que o colaborador ative sua conta e defina sua senha.`);
   };
 
   // Helper formatting for file size
@@ -2485,7 +2578,10 @@ export default function Home() {
               setSectors(data.selectedSectors);
             }
           }}
-          onSkip={() => setShowOnboardingWizard(false)}
+          onSkip={() => {
+            setShowOnboardingWizard(false);
+            handleLogout();
+          }}
         />
       )}
 
@@ -2523,7 +2619,7 @@ export default function Home() {
           {/* Offline / Sync Status Badge */}
           {isSyncing ? (
             <span className="hidden sm:flex items-center gap-1.5 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full">
-              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+              <svg className="w-3 h-3 animate-spin" fill="none" viewBox="0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
               </svg>
@@ -2548,22 +2644,22 @@ export default function Home() {
 
           <div className="h-8 w-px bg-slate-200"></div>
 
-          {(currentUser?.role === "UNIT_MANAGER" || currentUser?.role === "COMPANY_ADMIN") && (
+          {currentUser?.role !== "OPERATOR" && (
             <button
               onClick={() => {
                 handleLogin({
                   id: "usr-operator",
-                  name: "João Roberto (Cozinheiro)",
+                  name: "João Roberto (Operador de Cozinha)",
                   email: "operador@restaurante.com",
                   role: "OPERATOR",
-                  companyId: currentUser.companyId || "comp-1",
-                  unitId: currentUser.unitId || "un-2",
+                  companyId: currentUser?.companyId || "comp-1",
+                  unitId: currentUser?.unitId || "un-2",
                   status: "active",
                   avatarUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuAO7Hl5S5Kqo3bFEfk8orp0XNzAxDQRiej3pR2O5ief-MkbtcYy49MPk0Otgq5rNveu5sZFc7AO6F195R1RO6NhKLz7AhKqZXAtlmC8_nlHSZ4LejavBzlS5T6Kl5eeeZjOdVfP9kBWpjaIekdkZrrLNE7Umz7BfyKRmsRtUDCDpgZH9ser9xm94aVyQxSf_jrhcDI8KjJPsrTU7k0zdIh-QS77QtQu4dU3CcDwLJfAyvKVOz61CvGGWDPrnPzAcTNTUyH3bPDtGU4"
                 });
               }}
-              className="hidden md:flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 px-3 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm"
-              title="Alternar para a visão do Operador durante a demonstração"
+              className="hidden md:flex items-center gap-1.5 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-sm cursor-pointer"
+              title="Alternar para a visão do Operador de Cozinha"
             >
               <Users className="w-3.5 h-3.5 text-emerald-600" />
               <span>Simular Operador ➔</span>
@@ -2690,6 +2786,53 @@ export default function Home() {
                   Ajustes Globais
                 </button>
               </>
+            ) : currentUser?.role === "RESELLER_ADMIN" ? (
+              <>
+                <button
+                  onClick={() => setActiveTab("reseller_dashboard")}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === "reseller_dashboard"
+                      ? "bg-purple-100 text-purple-950 font-bold border-r-4 border-purple-600"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  <Key className="w-5 h-5 text-purple-600" />
+                  Gestão de Licenças & Clientes
+                </button>
+                <button
+                  onClick={() => setActiveTab("cadastros")}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === "cadastros"
+                      ? "bg-purple-100 text-purple-950 font-bold border-r-4 border-purple-600"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  <Building className="w-5 h-5 text-purple-600" />
+                  Restaurantes Clientes
+                </button>
+                <button
+                  onClick={() => setActiveTab("reports")}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === "reports"
+                      ? "bg-purple-100 text-purple-950 font-bold border-r-4 border-purple-600"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  <FileText className="w-5 h-5 text-purple-600" />
+                  Relatórios Consolidados
+                </button>
+                <button
+                  onClick={() => setActiveTab("settings")}
+                  className={`w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    activeTab === "settings"
+                      ? "bg-purple-100 text-purple-950 font-bold border-r-4 border-purple-600"
+                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  <Settings className="w-5 h-5 text-purple-600" />
+                  Configurações
+                </button>
+              </>
             ) : (
               <>
                 <button
@@ -2805,7 +2948,7 @@ export default function Home() {
           </nav>
 
           <div className="px-4 mt-auto border-t border-slate-100 pt-4 space-y-2">
-            {currentUser?.role !== "SAAS_ADMIN" && (
+            {currentUser?.role !== "SAAS_ADMIN" && currentUser?.role !== "RESELLER_ADMIN" && (
               <button
                 onClick={handleCreateNewChecklist}
                 className="w-full py-2.5 px-4 bg-[#131b2e] hover:bg-slate-800 text-white rounded-lg font-semibold text-sm flex items-center justify-center gap-2 transition-all shadow-sm"
@@ -2904,11 +3047,10 @@ export default function Home() {
                     onChange={(e) => setChecklistSectorFilter(e.target.value)}
                     className="bg-slate-50 border-none rounded-lg text-xs font-semibold py-1.5 pr-10 cursor-pointer focus:ring-2 focus:ring-slate-900"
                   >
-                    <option>Todos os Setores</option>
-                    <option>Cozinha</option>
-                    <option>Salão</option>
-                    <option>Estoque</option>
-                    <option>Atendimento</option>
+                    <option value="Todos os Setores">Todos os Setores</option>
+                    {availableSectors.map((sec) => (
+                      <option key={sec} value={sec}>{sec}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -3059,7 +3201,7 @@ export default function Home() {
               units={units}
               currentUser={currentUser}
               users={users}
-              sectors={sectors}
+              sectors={availableSectors}
             />
           )}
           {/* ========================================================================= */}
@@ -3077,126 +3219,91 @@ export default function Home() {
             />
           )}
           {/* ========================================================================= */}
+          {/* VIEW: RELATÓRIOS CONSOLIDADOS                                             */}
+          {/* ========================================================================= */}
+          {activeTab === "reports" && (
+            <ReportsManager
+              units={units}
+              dbConnected={dbConnected}
+              selectedPeriodFilter={selectedPeriodFilter}
+              setSelectedPeriodFilter={setSelectedPeriodFilter}
+              selectedSpecificDate={selectedSpecificDate}
+              setSelectedSpecificDate={setSelectedSpecificDate}
+              selectedStartDate={selectedStartDate}
+              setSelectedStartDate={setSelectedStartDate}
+              selectedEndDate={selectedEndDate}
+              setSelectedEndDate={setSelectedEndDate}
+              checklists={checklists}
+              nonConformities={nonConformities}
+              actionPlans={actionPlans}
+              occurrences={occurrences}
+              currentUser={currentUser}
+            />
+          )}
+
+          {/* ========================================================================= */}
           {/* VIEW: SETTINGS                                                            */}
           {/* ========================================================================= */}
           {activeTab === "settings" && (
             <div className="space-y-6 animate-fadeIn">
-              {/* Header and Add Unit Button */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  <h2 className="text-3xl font-black text-slate-900">Configurações de Unidades</h2>
-                  <p className="text-slate-500 text-sm mt-1">Gerencie as unidades e restaurantes do seu grupo corporativo.</p>
+              {/* Card de Configuração da IA Gemini */}
+              <div className="bg-[#131b2e] rounded-2xl p-6 text-white shadow-lg space-y-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                      <Brain className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-base">Inteligência Artificial (Google Gemini API Key)</h3>
+                      <p className="text-xs text-slate-300">Insira sua chave privada do Google para habilitar diagnósticos da IA Consultiva.</p>
+                    </div>
+                  </div>
                 </div>
-                {currentUser?.role !== "UNIT_MANAGER" ? (
-                  <button
-                    onClick={() => setIsAddUnitModalOpen(true)}
-                    className="flex items-center justify-center gap-2 px-6 py-2.5 bg-[#131b2e] hover:bg-slate-800 text-white rounded-lg font-bold text-sm shadow-sm transition-all"
+
+                <div className="flex flex-col sm:flex-row gap-3 pt-2">
+                  <input
+                    type="password"
+                    defaultValue={typeof window !== "undefined" ? localStorage.getItem("checkrest_gemini_api_key") || "" : ""}
+                    onChange={(e) => {
+                      if (typeof window !== "undefined") {
+                        localStorage.setItem("checkrest_gemini_api_key", e.target.value.trim());
+                      }
+                    }}
+                    placeholder="Cole sua chave aqui (Ex: AIzaSy...)"
+                    className="flex-1 bg-slate-900/80 border border-slate-700 focus:ring-2 focus:ring-indigo-500 rounded-xl px-4 py-2.5 text-xs text-white placeholder:text-slate-500 font-mono"
+                  />
+                  <a
+                    href="https://aistudio.google.com/app/apikey"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center gap-2 shadow-md shrink-0"
                   >
-                    <Plus className="w-4 h-4" />
-                    Adicionar Unidade
-                  </button>
-                ) : (
-                  <span className="text-xs font-bold text-slate-400 bg-slate-100 px-3 py-1.5 rounded-lg border border-slate-200">
-                    Apenas admins podem cadastrar filiais
-                  </span>
-                )}
+                    <Key className="w-4 h-4" />
+                    Gerar Chave no Google (Grátis)
+                  </a>
+                </div>
               </div>
 
-              {/* Units Workspace */}
-              <div className="space-y-4">
-                {/* Search Bar */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 flex flex-col md:flex-row gap-4 items-center justify-between">
-                  <div className="flex items-center w-full md:w-1/2 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 focus-within:ring-2 focus-within:ring-slate-900">
-                    <Filter className="w-4 h-4 text-slate-400 mr-2" />
-                    <input
-                      type="text"
-                      value={searchUnitQuery}
-                      onChange={(e) => setSearchUnitQuery(e.target.value)}
-                      placeholder="Buscar por nome, endereço ou gerente..."
-                      className="w-full bg-transparent border-none focus:ring-0 text-xs placeholder:text-slate-400 p-0"
-                    />
+              {/* Card de Atalho para Gestão de Cadastro (Unidades, Setores & Colaboradores) */}
+              <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600 shrink-0">
+                    <Building className="w-6 h-6" />
                   </div>
-                  
-                  <div className="text-slate-400 text-xs font-bold uppercase">
-                    {filteredUnits.length} unidades
+                  <div>
+                    <h3 className="font-extrabold text-slate-800 text-base">Gestão de Unidades, Setores & Colaboradores</h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      O cadastro e gerenciamento de lojas, filiais, setores e acessos de equipe é realizado exclusivamente na aba Gestão de Cadastro.
+                    </p>
                   </div>
                 </div>
-
-                {/* Units Modern Table Grid */}
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
-                  <div className="hidden md:grid grid-cols-12 gap-4 px-6 py-3 border-b border-slate-200 bg-slate-50/50 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                    <div className="col-span-5">Unidade & Endereço</div>
-                    <div className="col-span-2">Status</div>
-                    <div className="col-span-3">Gerente Responsável</div>
-                    <div className="col-span-2 text-right">Ações</div>
-                  </div>
-
-                  {filteredUnits.length === 0 ? (
-                    <div className="py-12 text-center text-slate-400 text-sm italic">
-                      Nenhuma unidade cadastrada ou correspondente aos termos de busca.
-                    </div>
-                  ) : (
-                    filteredUnits.map((un) => (
-                      <div
-                        key={un.id}
-                        className="grid grid-cols-1 md:grid-cols-12 gap-4 px-6 py-4 border-b border-slate-100 hover:bg-slate-50/50 transition-colors items-center group"
-                      >
-                        <div className="col-span-5 flex items-start gap-4">
-                          <div className="w-10 h-10 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center flex-shrink-0">
-                            <Store className="w-5 h-5 text-slate-600" />
-                          </div>
-                          <div>
-                            <h3 className="font-bold text-slate-800 text-sm leading-tight">{un.name}</h3>
-                            <p className="text-xs text-slate-400 mt-1 leading-relaxed">{un.address}</p>
-                          </div>
-                        </div>
-
-                        <div className="col-span-2">
-                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                            un.status === "active"
-                              ? "bg-emerald-50 text-[#006c49]"
-                              : "bg-slate-100 text-slate-500"
-                          }`}>
-                            <span className={`w-1.5 h-1.5 rounded-full ${un.status === "active" ? "bg-emerald-500" : "bg-slate-400"}`}></span>
-                            {un.status === "active" ? "Ativo" : "Inativo"}
-                          </span>
-                        </div>
-
-                        <div className="col-span-3 flex items-center gap-3">
-                          <img
-                            alt="Gerente avatar"
-                            className="w-7 h-7 rounded-full border border-slate-200 object-cover"
-                            src={un.managerAvatar}
-                          />
-                          <span className="text-xs font-semibold text-slate-700">{un.managerName}</span>
-                        </div>
-
-                        <div className="col-span-2 flex items-center justify-end gap-1.5 md:opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => alert(`Unidade ${un.name}: ${un.address}`)}
-                            className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-all"
-                            title="Visualizar Detalhes"
-                          >
-                            <Activity className="w-4 h-4" />
-                          </button>
-                          {currentUser?.role !== "UNIT_MANAGER" && (
-                            <button
-                              onClick={() => handleToggleUnitStatus(un.id)}
-                              className={`p-2 rounded-lg transition-all ${
-                                un.status === "active"
-                                  ? "text-slate-400 hover:text-red-500 hover:bg-red-50"
-                                  : "text-slate-400 hover:text-emerald-500 hover:bg-emerald-50"
-                              }`}
-                              title={un.status === "active" ? "Desativar Unidade" : "Ativar Unidade"}
-                            >
-                              {un.status === "active" ? <Trash2 className="w-4 h-4" /> : <Undo className="w-4 h-4" />}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
+                <button
+                  onClick={() => setActiveTab("cadastros")}
+                  className="px-6 py-2.5 bg-[#131b2e] hover:bg-slate-800 text-white rounded-xl font-bold text-xs shadow-sm transition-all flex items-center justify-center gap-2 shrink-0"
+                >
+                  <Store className="w-4 h-4 text-emerald-400" />
+                  Ir para Gestão de Cadastro
+                </button>
               </div>
 
               {/* Add Unit Modal */}
@@ -3613,24 +3720,42 @@ export default function Home() {
                               </div>
 
                               {/* Unidade */}
-                              <div className="col-span-3">
+                              <div className="col-span-2">
                                 <span className="text-xs font-semibold text-slate-650">
                                   {userUnit ? userUnit.name : "Global / Todas"}
                                 </span>
                               </div>
 
                               {/* Ações */}
-                              <div className="col-span-2 flex items-center justify-end gap-2">
+                              <div className="col-span-3 flex items-center justify-end gap-1.5">
+                                <button
+                                  onClick={() => handleCopyInviteLink(usr)}
+                                  className="px-2 py-1 rounded text-[10px] font-bold uppercase border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-all flex items-center gap-1 shrink-0"
+                                  title="Copiar Link de Acesso do Colaborador"
+                                >
+                                  <Copy className="w-3 h-3 text-indigo-600" />
+                                  Link
+                                </button>
                                 <button
                                   onClick={() => handleToggleUserStatus(usr.id)}
-                                  className={`px-2.5 py-1 rounded text-[10px] font-bold uppercase border transition-all ${
+                                  className={`px-2 py-1 rounded text-[10px] font-bold uppercase border transition-all shrink-0 ${
                                     usr.status === "active"
-                                      ? "border-red-200 text-red-600 bg-red-50 hover:bg-red-100"
+                                      ? "border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100"
                                       : "border-emerald-200 text-emerald-600 bg-emerald-50 hover:bg-emerald-100"
                                   }`}
+                                  title={usr.status === "active" ? "Suspender acesso" : "Ativar acesso"}
                                 >
                                   {usr.status === "active" ? "Suspender" : "Ativar"}
                                 </button>
+                                {currentUser?.role === "COMPANY_ADMIN" && (
+                                  <button
+                                    onClick={() => handleDeleteUser(usr.id)}
+                                    className="p-1.5 rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 transition-all shrink-0"
+                                    title="Excluir Colaborador Permanentemente"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                               </div>
                             </div>
                           );
@@ -4115,6 +4240,112 @@ export default function Home() {
               >
                 {savingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
                 Salvar Alterações
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Global: Adicionar Nova Unidade */}
+      {isAddUnitModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4 animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden transform transition-all">
+            {/* Modal Header */}
+            <div className="px-6 py-5 bg-gradient-to-r from-slate-900 via-[#131b2e] to-slate-800 text-white flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-white backdrop-blur-sm shadow-inner">
+                  <Store className="w-5 h-5 text-indigo-300" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-base tracking-tight">Adicionar Nova Unidade</h3>
+                  <p className="text-slate-300 text-xs mt-0.5">Cadastre uma nova loja ou filial no grupo corporativo</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsAddUnitModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 space-y-5 bg-slate-50/50">
+              {/* Nome da Unidade */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Store className="w-3.5 h-3.5 text-slate-400" />
+                  Nome da Unidade / Filial
+                </label>
+                <input
+                  type="text"
+                  value={newUnitName}
+                  onChange={(e) => setNewUnitName(e.target.value)}
+                  className="w-full border border-slate-200 bg-white focus:ring-2 focus:ring-[#131b2e] focus:border-transparent rounded-xl text-xs py-2.5 px-3.5 font-semibold text-slate-800 shadow-sm placeholder:text-slate-400 transition-all"
+                  placeholder="Ex: Filial - Pinheiros"
+                />
+              </div>
+
+              {/* Endereço Completo */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                  <Building className="w-3.5 h-3.5 text-slate-400" />
+                  Endereço Completo
+                </label>
+                <input
+                  type="text"
+                  value={newUnitAddress}
+                  onChange={(e) => setNewUnitAddress(e.target.value)}
+                  className="w-full border border-slate-200 bg-white focus:ring-2 focus:ring-[#131b2e] focus:border-transparent rounded-xl text-xs py-2.5 px-3.5 text-slate-800 shadow-sm placeholder:text-slate-400 transition-all"
+                  placeholder="Ex: Av. Faria Lima, 2000 - Pinheiros, São Paulo - SP"
+                />
+              </div>
+
+              {/* Gerente Responsável (Seleção Apenas de Usuários Cadastrados) */}
+              <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-700 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5">
+                    <User className="w-3.5 h-3.5 text-slate-400" />
+                    Gerente Responsável
+                  </span>
+                  <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100 uppercase tracking-wider">
+                    Apenas Cadastrados
+                  </span>
+                </label>
+                <select
+                  value={newUnitManager}
+                  onChange={(e) => setNewUnitManager(e.target.value)}
+                  className="w-full border border-slate-200 bg-white focus:ring-2 focus:ring-[#131b2e] focus:border-transparent rounded-xl text-xs py-2.5 px-3.5 font-semibold text-slate-800 shadow-sm cursor-pointer transition-all"
+                >
+                  <option value="">Selecione um gerente cadastrado...</option>
+                  {users
+                    .filter(u => u.role === "UNIT_MANAGER" || u.role === "COMPANY_ADMIN")
+                    .map((usr) => (
+                      <option key={usr.id} value={usr.name}>
+                        {usr.name} ({usr.role === "COMPANY_ADMIN" ? "Admin Empresa" : "Gerente de Unidade"}) - {usr.email}
+                      </option>
+                    ))}
+                </select>
+                <p className="text-[11px] text-slate-400 leading-tight mt-1">
+                  Selecione o responsável pela unidade dentre os gerentes ou administradores previamente cadastrados.
+                </p>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-white border-t border-slate-100 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setIsAddUnitModalOpen(false)}
+                className="px-5 py-2.5 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-xl text-xs font-bold transition-all uppercase tracking-wider"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={handleAddUnit}
+                className="px-6 py-2.5 bg-[#131b2e] hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-lg flex items-center gap-2 uppercase tracking-wider"
+              >
+                <Check className="w-4 h-4" />
+                Salvar Unidade
               </button>
             </div>
           </div>

@@ -568,38 +568,58 @@ export async function verifyInviteTokenAction(token: string) {
       include: { company: true }
     });
 
-    if (!invite) {
-      throw new Error("Token de convite não encontrado.");
-    }
-    if (invite.used) {
-      throw new Error("Este convite já foi utilizado para ativar uma conta.");
-    }
-    if (new Date(invite.expiresAt) < new Date()) {
-      throw new Error("Este convite expirou (validade de 48 horas). Solicite um novo link ao administrador.");
+    if (invite) {
+      if (invite.used) {
+        throw new Error("Este convite já foi utilizado para ativar uma conta.");
+      }
+      if (new Date(invite.expiresAt) < new Date()) {
+        throw new Error("Este convite expirou (validade de 48 horas). Solicite um novo link ao administrador.");
+      }
+
+      return {
+        token: invite.token,
+        email: invite.email,
+        role: invite.role,
+        companyId: invite.companyId,
+        unitId: invite.unitId,
+        companyName: invite.company?.name || "Empresa Cadastrada",
+        expiresAt: invite.expiresAt
+      };
     }
 
-    return {
-      token: invite.token,
-      email: invite.email,
-      role: invite.role,
-      companyId: invite.companyId,
-      unitId: invite.unitId,
-      companyName: invite.company?.name || "Empresa Cadastrada",
-      expiresAt: invite.expiresAt
-    };
+    if (token.startsWith("invite_")) {
+      const userId = token.replace("invite_", "");
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        include: { company: true }
+      });
+      if (user) {
+        return {
+          token,
+          email: user.email,
+          role: user.role,
+          companyId: user.companyId,
+          unitId: user.unitId,
+          companyName: user.company?.name || "Restaurante Central Ltda.",
+          expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString()
+        };
+      }
+    }
+
+    throw new Error("Token de convite não encontrado.");
   });
 
   if (dbRes.success && dbRes.data) {
     return dbRes;
   }
 
-  if (token.startsWith("token_") || token.includes("-")) {
+  if (token.startsWith("token_") || token.startsWith("invite_") || token.includes("-")) {
     return {
       success: true,
       data: {
         token: token,
-        email: "proprietario@empresa.com.br",
-        role: "COMPANY_ADMIN",
+        email: "colaborador@empresa.com.br",
+        role: "UNIT_MANAGER",
         companyId: "comp-1",
         unitId: null as string | null,
         companyName: "Restaurante Central Ltda.",
@@ -1916,6 +1936,29 @@ export async function updateUserProfileAction(data: {
     });
 
     return updatedUser;
+  });
+}
+
+/**
+ * Deletes a user permanently from the database.
+ */
+export async function deleteUserAction(userId: string, performedByUserId?: string) {
+  return runWithConnectionCheck(async () => {
+    const deleted = await prisma.user.delete({
+      where: { id: userId }
+    });
+
+    await logAudit({
+      companyId: deleted.companyId,
+      userId: performedByUserId || deleted.id,
+      action: "USER_DELETE",
+      entity: "User",
+      entityId: deleted.id,
+      oldValue: JSON.stringify({ name: deleted.name, email: deleted.email }),
+      newValue: null
+    });
+
+    return deleted;
   });
 }
 

@@ -1,6 +1,4 @@
-"use client";
-
-import { RefObject } from "react";
+import { useState, useEffect, RefObject } from "react";
 import {
   Brain,
   User,
@@ -10,7 +8,11 @@ import {
   PlusCircle,
   ThumbsUp,
   Copy,
-  Loader2
+  Loader2,
+  Key,
+  CheckCircle2,
+  X,
+  ShieldCheck
 } from "lucide-react";
 import { ChatMessage } from "@/types";
 
@@ -19,7 +21,7 @@ interface AIConsultativeProps {
   chatInput: string;
   setChatInput: (val: string) => void;
   chatBottomRef: RefObject<HTMLDivElement>;
-  handleSendChatMessage: () => void;
+  handleSendChatMessage: (apiKeyOverride?: string) => void;
   handleConvertTemplate: (template: ChatMessage["checklistTemplate"]) => void;
   isAILoading: boolean;
 }
@@ -33,6 +35,25 @@ export default function AIConsultative({
   handleConvertTemplate,
   isAILoading
 }: AIConsultativeProps) {
+  const [apiKeyModalOpen, setApiKeyModalOpen] = useState(false);
+  const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [savedSuccess, setSavedSuccess] = useState(false);
+
+  useEffect(() => {
+    const savedKey = localStorage.getItem("checkrest_gemini_api_key") || "";
+    setGeminiApiKey(savedKey);
+  }, []);
+
+  const handleSaveApiKey = (e: React.FormEvent) => {
+    e.preventDefault();
+    localStorage.setItem("checkrest_gemini_api_key", geminiApiKey.trim());
+    setSavedSuccess(true);
+    setTimeout(() => {
+      setSavedSuccess(false);
+      setApiKeyModalOpen(false);
+    }, 1200);
+  };
+
   return (
     <div className="flex flex-col lg:flex-row gap-6 animate-fadeIn h-[calc(100vh-12rem)]">
       
@@ -48,17 +69,29 @@ export default function AIConsultative({
               <p className="text-[10px] text-slate-400">IA Consultiva CheckRest v2.4</p>
             </div>
           </div>
-          {isAILoading ? (
-            <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-bold">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              Processando...
-            </span>
-          ) : (
-            <span className="flex items-center gap-1 text-[10px] text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full font-bold">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
-              Conectado
-            </span>
-          )}
+          
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setApiKeyModalOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-700 rounded-lg text-xs font-bold transition-all shadow-sm"
+              title="Configurar Google Gemini API Key"
+            >
+              <Key className="w-3.5 h-3.5 text-indigo-600" />
+              {geminiApiKey ? "Chave IA Ativa" : "Configurar API Key"}
+            </button>
+
+            {isAILoading ? (
+              <span className="flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full font-bold">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Processando...
+              </span>
+            ) : (
+              <span className="flex items-center gap-1 text-[10px] text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full font-bold">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span>
+                Conectado
+              </span>
+            )}
+          </div>
         </div>
 
         {/* Messages List Area */}
@@ -258,6 +291,83 @@ export default function AIConsultative({
         </div>
       </aside>
 
+      {/* Modal para inserção da Chave Gemini API */}
+      {apiKeyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white border border-slate-200 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5 relative">
+            <button
+              onClick={() => setApiKeyModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-700 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="space-y-2">
+              <div className="w-10 h-10 rounded-xl bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600 mb-2">
+                <Key className="w-5 h-5" />
+              </div>
+              <h3 className="text-lg font-bold text-slate-900">Configuração da API Key (Google Gemini)</h3>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Insira a sua chave do <strong>Google Gemini AI</strong> para habilitar respostas em tempo real com inteligência artificial avançada.
+              </p>
+            </div>
+
+            {savedSuccess ? (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-emerald-800 space-y-1 text-xs">
+                <div className="flex items-center gap-2 font-bold text-sm text-emerald-700">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  Chave Gemini salva com sucesso!
+                </div>
+                <p className="text-emerald-700">
+                  Sua chave da API do Gemini foi armazenada com segurança e está ativa para suas consultas.
+                </p>
+              </div>
+            ) : (
+              <form onSubmit={handleSaveApiKey} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wider block">
+                    Google Gemini API Key
+                  </label>
+                  <input
+                    type="password"
+                    value={geminiApiKey}
+                    onChange={(e) => setGeminiApiKey(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full border border-slate-200 focus:ring-2 focus:ring-indigo-500 rounded-xl py-2.5 px-3 text-xs font-mono text-slate-800 placeholder:text-slate-400"
+                  />
+                  <p className="text-[10px] text-slate-400 pt-1">
+                    Você pode gerar uma chave gratuita acessando{" "}
+                    <a
+                      href="https://aistudio.google.com/app/apikey"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-indigo-600 underline font-bold"
+                    >
+                      aistudio.google.com
+                    </a>
+                  </p>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setApiKeyModalOpen(false)}
+                    className="px-4 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs transition-all shadow-md shadow-indigo-500/10"
+                  >
+                    Salvar Chave
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -9,6 +9,9 @@ function ActivateForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const token = searchParams.get("token") || "";
+  const emailParam = searchParams.get("email");
+  const nameParam = searchParams.get("name");
+  const roleParam = searchParams.get("role");
 
   const [loading, setLoading] = useState(true);
   const [inviteData, setInviteData] = useState<any>(null);
@@ -37,21 +40,50 @@ function ActivateForm() {
       try {
         const res = await verifyInviteTokenAction(token);
         if (res.success && res.data) {
-          setInviteData(res.data);
-          setName(res.data.email.split("@")[0].replace(".", " "));
-          setGoogleEmailInput(res.data.email);
+          const finalEmail = emailParam || res.data.email;
+          const finalRole = roleParam || res.data.role;
+          const defaultName = finalEmail ? finalEmail.split("@")[0].replace(".", " ") : "Usuário";
+          const finalName = nameParam || defaultName;
+
+          setInviteData({
+            ...res.data,
+            email: finalEmail,
+            role: finalRole
+          });
+          setName(finalName);
+          setGoogleEmailInput(finalEmail);
+        } else if (emailParam) {
+          setInviteData({
+            token,
+            email: emailParam,
+            role: roleParam || "UNIT_MANAGER",
+            companyName: "Restaurante Central Ltda."
+          });
+          setName(nameParam || emailParam.split("@")[0]);
+          setGoogleEmailInput(emailParam);
         } else {
           setError(res.error || "Convite inválido ou expirado.");
         }
       } catch (e: any) {
-        setError(e.message || "Erro ao validar link de ativação.");
+        if (emailParam) {
+          setInviteData({
+            token,
+            email: emailParam,
+            role: roleParam || "UNIT_MANAGER",
+            companyName: "Restaurante Central Ltda."
+          });
+          setName(nameParam || emailParam.split("@")[0]);
+          setGoogleEmailInput(emailParam);
+        } else {
+          setError(e.message || "Erro ao validar link de ativação.");
+        }
       } finally {
         setLoading(false);
       }
     }
 
     loadInvite();
-  }, [token]);
+  }, [token, emailParam, nameParam, roleParam]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

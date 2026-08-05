@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Mail, Lock, Brain, Shield, User, Store, Key } from "lucide-react";
+import { Mail, Lock, Brain, Shield, User, Store, Key, Eye, EyeOff, CheckCircle2, X } from "lucide-react";
 import { User as UserType, Role } from "@/types";
 import { loginUserAction } from "@/app/actions/dbActions";
 
@@ -60,7 +60,7 @@ const DEMO_USERS = [
     name: "Ana Martins (Gerente Unidade)",
     companyId: "comp-1",
     unitId: "un-2",
-    avatarUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuDyfX8IQJfUdA4ZFxNthzgW-lf6TQccAXYyrRSNCqqIe4LGUFXxzAcBc7OLO6BtHSR7G58m_KEk3Gxm8tGNRfRlO9Ambje4wcy8BK1vSJkPeaFM1F4t2RVFqv1PUqh3Z1S1L-uO5PqQ_jccM-JUfXHpVwHLZL_pqimtnw7O5tFRuA5SBc_77nkn1_MVLgJ7edF8XK6n2viqf7OF7MltA6lSvAfbvRgRWKRrfYXPqQ8rStH9ErmZZZSdlBjmtJ1bQ8nGuD6KplIi_GI"
+    avatarUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuDyfX8IQJfUdA4ZFxNthzgW-lf6TQccAXYyrRSNCqqIe4LGUFXxzAcBc7OLO6BtHSR7G58m_KEk3Gxm8tGNRfRlO9Ambje4wcy8BK1vSJkPeaFM1F4t2RVFqv1PUqh3Z1S1L-uO5PqQ_jccM-JUfXHpVwHLZL_pqimtnw7O5tFRuA5SBc_77nkn1_MVLgJ7edF8XK6n2viqf7OF7MltA6lSvAfbvRgRWKRrfYXPqQ8rStH9ErmZZZSdlBjmtJ1bQ8nGuD6KplIi_GI text-slate"
   },
   {
     role: "OPERATOR" as const,
@@ -82,6 +82,11 @@ export default function Login({ onLogin }: LoginProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [clientMode, setClientMode] = useState(true);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showForgotPasswordModal, setShowForgotPasswordModal] = useState(false);
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetSubmitted, setResetSubmitted] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
 
   const visibleDemoUsers = clientMode
     ? DEMO_USERS.filter((u) => u.role === "UNIT_MANAGER" || u.role === "OPERATOR")
@@ -147,6 +152,16 @@ export default function Login({ onLogin }: LoginProps) {
     } else {
       setError("Credenciais inválidas. Use um dos atalhos rápidos abaixo.");
     }
+  };
+
+  const handleResetPassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail) return;
+    setResetLoading(true);
+    setTimeout(() => {
+      setResetLoading(false);
+      setResetSubmitted(true);
+    }, 600);
   };
 
   const handleQuickFill = (demo: typeof DEMO_USERS[number]) => {
@@ -288,18 +303,39 @@ export default function Login({ onLogin }: LoginProps) {
               </div>
 
               <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Senha</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Senha</label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResetEmail(email);
+                      setResetSubmitted(false);
+                      setShowForgotPasswordModal(true);
+                    }}
+                    className="text-xs text-emerald-400 hover:text-emerald-300 font-semibold transition-colors focus:outline-none"
+                  >
+                    Esqueci minha senha
+                  </button>
+                </div>
                 <div className="relative">
                   <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
                     <Lock className="w-4 h-4" />
                   </span>
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full bg-slate-900/60 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all placeholder:text-slate-600"
+                    className="w-full bg-slate-900/60 border border-white/10 rounded-xl py-2.5 pl-10 pr-10 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all placeholder:text-slate-600"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-200 transition-colors focus:outline-none"
+                    title={showPassword ? "Ocultar senha" : "Mostrar senha"}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -315,6 +351,85 @@ export default function Login({ onLogin }: LoginProps) {
         </div>
 
       </div>
+
+      {/* Modal Esqueci Minha Senha */}
+      {showForgotPasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-white/10 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-5 relative">
+            <button
+              onClick={() => setShowForgotPasswordModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="space-y-2">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 mb-2">
+                <Key className="w-5 h-5" />
+              </div>
+              <h3 className="text-lg font-bold text-white">Recuperação de Senha</h3>
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Informe o seu e-mail cadastrado. Enviaremos um link seguro para você redefinir sua senha.
+              </p>
+            </div>
+
+            {resetSubmitted ? (
+              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 text-emerald-400 space-y-2 text-xs">
+                <div className="flex items-center gap-2 font-bold text-sm">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                  E-mail de recuperação enviado!
+                </div>
+                <p className="text-slate-300">
+                  Verifique a caixa de entrada (ou pasta de spam) de <strong className="text-white">{resetEmail}</strong> para redefinir sua senha.
+                </p>
+                <button
+                  onClick={() => setShowForgotPasswordModal(false)}
+                  className="w-full mt-3 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2 rounded-lg text-xs transition-colors"
+                >
+                  Voltar ao Login
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleResetPassword} className="space-y-4">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block">E-mail</label>
+                  <div className="relative">
+                    <span className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                      <Mail className="w-4 h-4" />
+                    </span>
+                    <input
+                      type="email"
+                      required
+                      value={resetEmail}
+                      onChange={(e) => setResetEmail(e.target.value)}
+                      placeholder="seuemail@exemplo.com"
+                      className="w-full bg-slate-950/80 border border-white/10 rounded-xl py-2.5 pl-10 pr-4 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:border-emerald-500 transition-all placeholder:text-slate-600"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowForgotPasswordModal(false)}
+                    className="px-4 py-2.5 rounded-xl border border-white/10 text-xs font-semibold text-slate-400 hover:bg-white/5 transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={resetLoading}
+                    className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-extrabold text-xs uppercase tracking-wider transition-all shadow-md shadow-emerald-500/10 disabled:opacity-50"
+                  >
+                    {resetLoading ? "Enviando..." : "Enviar Link"}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+

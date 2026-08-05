@@ -129,7 +129,13 @@ export default function Dashboard({
             <div className="p-3 bg-slate-100 rounded-lg text-slate-600">
               <Calendar className="w-6 h-6" />
             </div>
-            <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">+12%</span>
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+              dashboardStats.scheduled === 0
+                ? "bg-slate-100 text-slate-500"
+                : "bg-emerald-50 text-emerald-600"
+            }`}>
+              {dashboardStats.scheduled === 0 ? "Sem Agendamentos" : `+${dashboardStats.scheduled} Hoje`}
+            </span>
           </div>
           <p className="text-slate-500 font-semibold text-xs uppercase tracking-wider mb-1">Checklists Agendados</p>
           <h3 className="text-3xl font-extrabold text-slate-900">{dashboardStats.scheduled}</h3>
@@ -141,35 +147,79 @@ export default function Dashboard({
             <div className="p-3 bg-blue-50 rounded-lg text-blue-600">
               <Activity className="w-6 h-6" />
             </div>
-            <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">Ativo</span>
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+              dashboardStats.active === 0
+                ? "bg-slate-100 text-slate-500"
+                : "bg-blue-50 text-blue-600"
+            }`}>
+              {dashboardStats.active === 0 ? "Nenhum Ativo" : "Em Execução"}
+            </span>
           </div>
           <p className="text-slate-500 font-semibold text-xs uppercase tracking-wider mb-1">Em Curso</p>
           <h3 className="text-3xl font-extrabold text-slate-900">{dashboardStats.active}</h3>
           <div className="absolute bottom-0 left-0 w-full h-1 bg-slate-200 group-hover:bg-blue-600 transition-colors"></div>
         </div>
 
-        <div className="bg-white border border-slate-200 p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-emerald-50 rounded-lg text-[#006c49]">
-              <CheckCircle2 className="w-6 h-6" />
+        {(() => {
+          const total = dashboardStats.scheduled + dashboardStats.completed + dashboardStats.delayed;
+          const percent = total > 0 ? Math.round((dashboardStats.completed / total) * 100) : 0;
+          return (
+            <div className="bg-white border border-slate-200 p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
+              <div className="flex justify-between items-start mb-4">
+                <div className="p-3 bg-emerald-50 rounded-lg text-[#006c49]">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                  dashboardStats.completed === 0
+                    ? "bg-slate-100 text-slate-500"
+                    : "bg-emerald-50 text-[#006c49]"
+                }`}>
+                  {dashboardStats.completed === 0 ? "0% Concluído" : `${percent}% Meta`}
+                </span>
+              </div>
+              <p className="text-slate-500 font-semibold text-xs uppercase tracking-wider mb-1">Finalizados</p>
+              <h3 className="text-3xl font-extrabold text-[#006c49]">{dashboardStats.completed}</h3>
+              <div className="absolute bottom-0 left-0 w-full h-1 bg-slate-200 group-hover:bg-[#006c49] transition-colors"></div>
             </div>
-            <span className="text-xs font-bold text-[#006c49] bg-emerald-50 px-2 py-0.5 rounded-full">98% Meta</span>
-          </div>
-          <p className="text-slate-500 font-semibold text-xs uppercase tracking-wider mb-1">Finalizados</p>
-          <h3 className="text-3xl font-extrabold text-[#006c49]">{dashboardStats.completed}</h3>
-          <div className="absolute bottom-0 left-0 w-full h-1 bg-slate-200 group-hover:bg-[#006c49] transition-colors"></div>
-        </div>
+          );
+        })()}
 
-        <div className="bg-red-50/30 border border-red-200/60 p-6 rounded-xl shadow-sm hover:shadow-md transition-shadow relative overflow-hidden group">
+        <div className={`p-6 rounded-xl shadow-sm hover:shadow-md transition-all relative overflow-hidden group ${
+          dashboardStats.delayed === 0
+            ? "bg-white border border-slate-200"
+            : "bg-red-50/30 border border-red-200/60"
+        }`}>
           <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-red-50 rounded-lg text-red-600">
+            <div className={`p-3 rounded-lg ${
+              dashboardStats.delayed === 0
+                ? "bg-emerald-50 text-emerald-600"
+                : "bg-red-50 text-red-600"
+            }`}>
               <AlertTriangle className="w-6 h-6" />
             </div>
-            <span className="text-xs font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-full">Ação Necessária</span>
+            <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+              dashboardStats.delayed === 0
+                ? "bg-emerald-50 text-emerald-700"
+                : "bg-red-100 text-red-700 animate-pulse"
+            }`}>
+              {dashboardStats.delayed === 0 ? "✓ Em Dia" : "Ação Necessária"}
+            </span>
           </div>
-          <p className="text-red-700/80 font-semibold text-xs uppercase tracking-wider mb-1">Atrasados</p>
-          <h3 className="text-3xl font-extrabold text-red-700">{dashboardStats.delayed}</h3>
-          <div className="absolute bottom-0 left-0 w-full h-1 bg-red-200 group-hover:bg-red-600 transition-colors"></div>
+          <p className={`font-semibold text-xs uppercase tracking-wider mb-1 ${
+            dashboardStats.delayed === 0 ? "text-slate-500" : "text-red-700/80"
+          }`}>
+            Atrasados
+          </p>
+          <h3 className={`text-3xl font-extrabold ${
+            dashboardStats.delayed === 0 ? "text-slate-900" : "text-red-700"
+          }`}>
+            {dashboardStats.delayed}
+          </h3>
+          <div className={`absolute bottom-0 left-0 w-full h-1 transition-colors ${
+            dashboardStats.delayed === 0
+              ? "bg-slate-200 group-hover:bg-emerald-500"
+              : "bg-red-200 group-hover:bg-red-600"
+          }`}></div>
         </div>
       </div>
 
