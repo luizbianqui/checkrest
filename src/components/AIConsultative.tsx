@@ -189,7 +189,7 @@ export default function AIConsultative({
               className="flex-1 bg-transparent border-none focus:ring-0 text-sm py-2 px-3 placeholder:text-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
             />
             <button
-              onClick={handleSendChatMessage}
+              onClick={() => handleSendChatMessage()}
               disabled={isAILoading}
               className="bg-[#131b2e] hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed text-white p-2.5 rounded-lg flex items-center justify-center transition-colors shadow-sm"
             >

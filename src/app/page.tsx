@@ -2644,7 +2644,7 @@ export default function Home() {
 
           <div className="h-8 w-px bg-slate-200"></div>
 
-          {currentUser?.role !== "OPERATOR" && (
+          {(currentUser?.role as any) !== "OPERATOR" && (
             <button
               onClick={() => {
                 handleLogin({
